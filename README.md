@@ -1,183 +1,256 @@
-# Retro Breakout - MCP App for Gemini Enterprise
+# Retro Breakout - Interactive MCP App for Gemini Enterprise
 
-An interactive, retro Atari-style Breakout game built as a **Model Context Protocol (MCP) App** (UI Extension) and designed to run seamlessly inside the **Gemini Enterprise Agent Platform (GEAP)**.
+An interactive, retro Atari-style Breakout arcade game built as a **Model Context Protocol (MCP) App** (UI Extension) designed to run natively inside the **Gemini Enterprise Agent Platform (GEAP) / Discovery Engine**.
 
-When a user in Gemini Enterprise prompts something like:
+When a user in Gemini Enterprise prompts:
 > *"Let's play a game"* or *"Launch Breakout"*
 
-Gemini calls the MCP server's `launch_breakout` tool. The tool response references an interactive UI resource (`ui://breakout`), prompting Gemini Enterprise to render the interactive HTML5 canvas game directly inside the conversation thread. The user and the agent can then interact with the game in real-time, tweak gameplay physics (paddle width, ball speed, lives), or enable cheat codes via natural language.
+Gemini calls the MCP server's `launch_breakout` tool. The tool response references an interactive UI resource (`ui://breakout`), prompting Gemini Enterprise to fetch the HTML5 bundle and render the interactive canvas game directly inside the conversation thread. The user and the agent can then interact with the game in real-time, live-adjusting gameplay physics (paddle width, ball speed, lives) or activating cheat codes via natural language.
 
-This project follows the [Model Context Protocol Apps Specification](https://github.com/modelcontextprotocol/ext-apps) (referencing examples such as the [budget-allocator-server](https://github.com/modelcontextprotocol/ext-apps/tree/main/examples/budget-allocator-server)).
-
----
-
-## 🕹️ Architecture & Features
-
-```
-┌────────────────────────────────────────────────────────────────────────┐
-│                        Gemini Enterprise (Chat UI)                     │
-│                                                                        │
-│   User: "Let's play Breakout, and make the paddle wider!"              │
-│   Gemini: "Launching Breakout with a wider paddle..."                  │
-│                                                                        │
-│   ┌────────────────────────────────────────────────────────────────┐   │
-│   │  🎮 [Embedded Iframe: ui://breakout]                           │   │
-│   │  Retro Breakout Canvas • CRT Scanline Filters • Particle FX    │   │
-│   │  Connected via @modelcontextprotocol/ext-apps                  │   │
-│   └────────────────────────────────────────────────────────────────┘   │
-└───────────────────────────────────┬────────────────────────────────────┘
-                                    │ MCP Protocol (SSE / JSON-RPC)
-                                    ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│                     MCP Server (Express / TypeScript)                  │
-│                                                                        │
-│   • Resources:                                                         │
-│     - ui://breakout (text/html;profile=mcp-app)                        │
-│                                                                        │
-│   • Tools:                                                             │
-│     - launch_breakout: Renders the breakout UI iframe                  │
-│     - update_game_settings: Adjusts paddle width, ball speed, lives    │
-│     - trigger_game_cheat: God mode, laser paddle, slow ball            │
-│     - get_game_config: Syncs game configuration                        │
-│                                                                        │
-│   • Transports & Auth:                                                 │
-│     - SSE (/mcp & /mcp/messages) + Stateless JSON-RPC POST /mcp       │
-│     - Mock OAuth 2.0 endpoints (/authorize & /token) for GEAP          │
-└────────────────────────────────────────────────────────────────────────┘
-```
-
-### Key Features
-- **Embedded In-Chat Rendering**: Serves a standalone HTML5/Canvas arcade game (`ui://breakout`) with retro styling, CRT scanline effects, audio-visual feedback, and particle bursts.
-- **MCP Ext-Apps SDK Bridge**: The web client uses `@modelcontextprotocol/ext-apps` to communicate bidirectionally with the MCP host.
-- **Real-Time Gameplay Adjustments via LLM**:
-  - *"Make the ball slower"*
-  - *"Turn on AI Autopilot"*
-  - *"Give me 10 lives"*
-  - *"Activate God Mode"*
-- **Dual Transport Support**:
-  - **Server-Sent Events (SSE)**: Full stateful streaming over `/mcp` and `/mcp/messages`.
-  - **Stateless JSON-RPC POST**: Direct compatibility with Cloud Connectors and webhook environments.
-- **Gemini Enterprise Ready**: Includes mock OAuth 2.0 endpoints (`/authorize`, `/token`) to satisfy Gemini Enterprise Agent Platform connector setup requirements out-of-the-box.
+This project implements the official [Model Context Protocol Apps Specification](https://github.com/modelcontextprotocol/ext-apps).
 
 ---
 
-## 🛠️ MCP Tools & Resources
+## 🕹️ End-to-End Architecture & Lifecycle
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                 Gemini Enterprise (Chat UI)                                 │
+│                                                                                             │
+│  1. User Prompt: "Let's play a game of Breakout!"                                           │
+│  2. Gemini Agent resolves intent -> calls MCP tool: launch_breakout                         │
+│                                                                                             │
+│  ┌───────────────────────────────────────────────────────────────────────────────────────┐  │
+│  │ 🎮 [Sandboxed Iframe Container: ui://breakout]                                        │  │
+│  │                                                                                       │  │
+│  │   [Handshake] App (ui/initialize) ──► Host Context ──► App (ui/notifications/init)    │  │
+│  │   [Status] Host dismisses loading spinner -> Interactive Canvas Renders at 60 FPS     │  │
+│  │                                                                                       │  │
+│  │   • Live Retro Canvas • Scanline Filters • Particle FX • AI Autopilot Tracker         │  │
+│  │                                                                                       │  │
+│  │   [Events -> Gemini] Score milestones, life lost, level cleared                       │  │
+│  │   [Gemini -> App] Live paddle resize, ball speed, god mode overrides                  │  │
+│  └───────────────────────────────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────┬──────────────────────────────────────────────┘
+                                               │
+                                               │ JSON-RPC 2.0 / MCP Protocol
+                                               ▼
+┌─────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                MCP Server (Cloud Run / Node.js)                             │
+│                                                                                             │
+│  • Tools:                                                                                   │
+│    - launch_breakout: Returns text confirmation + _meta.ui.resourceUri ("ui://breakout")    │
+│    - update_game_settings: Adjusts paddle width, ball speed, lives, autopilot, god mode     │
+│    - trigger_game_cheat: Activates laser paddle, extra ball, slow ball, level bypass        │
+│                                                                                             │
+│  • Resources:                                                                               │
+│    - ui://breakout (text/html;profile=mcp-app): Pre-cached, zero-dependency game bundle     │
+│                                                                                             │
+│  • Endpoints:                                                                               │
+│    - POST /mcp: High-performance stateless JSON-RPC dispatcher for Gemini Enterprise        │
+│    - GET /mcp & POST /mcp/messages: Server-Sent Events (SSE) streaming with keep-alive      │
+│    - GET /authorize & POST /token: OAuth 2.0 endpoints for connector authentication         │
+│    - GET /game: Direct standalone browser preview                                           │
+└─────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 🔄 Detailed Request, Handshake & Rendering Flow
+
+The following sequence illustrates the complete lifecycle from connector setup to in-chat gameplay:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as User (Browser)
+    participant GE as Gemini Enterprise (Host)
+    participant MCP as MCP Server (Cloud Run)
+    participant UI as App Iframe (Breakout Canvas)
+
+    Note over User,GE: 1. Prompt & Tool Execution
+    User->>GE: "Let's play Breakout!"
+    GE->>MCP: POST /mcp (tools/call: launch_breakout)
+    MCP-->>GE: 200 OK {content: [...], _meta: {ui: {resourceUri: "ui://breakout"}}}
+
+    Note over GE,MCP: 2. UI Resource Resolution
+    GE->>MCP: POST /mcp (resources/read: ui://breakout)
+    MCP-->>GE: 200 OK {contents: [{uri: "ui://breakout", text: "<html>...</html>"}]}
+
+    Note over GE,UI: 3. Sandboxed Iframe Mounting & Spinner
+    GE->>UI: Mounts sandboxed iframe (Displays blue loading spinner)
+
+    Note over GE,UI: 4. The 3-Way MCP Apps Handshake
+    UI->>GE: window.parent.postMessage({method: "ui/initialize", id: 1, params: {...}})
+    GE-->>UI: window.postMessage({id: 1, result: {hostContext: {...}}})
+    UI->>GE: window.parent.postMessage({method: "ui/notifications/initialized", params: {}})
+    Note over GE: Spinner is dismissed -> Game canvas is revealed & active!
+
+    Note over User,UI: 5. Interactive In-Chat Gameplay
+    User->>UI: Plays with arrow keys / touch swipe / mouse
+    UI->>GE: window.parent.postMessage({method: "ui/notifications/context-update", text: "Score: 100!"})
+
+    Note over User,GE: 6. Real-Time LLM Game Modifications
+    User->>GE: "Make the paddle wider and turn on Autopilot"
+    GE->>MCP: POST /mcp (tools/call: update_game_settings {paddleSize: 200, autopilot: true})
+    MCP-->>GE: 200 OK {settings: {paddleSize: 200, autopilot: true}}
+    GE->>UI: window.postMessage({method: "ui/notifications/tool-result", ...})
+    Note over UI: Game dynamically widens paddle & enables AI tracking!
+```
+
+---
+
+## 🤝 The MCP Apps 3-Way Handshake Protocol
+
+When Gemini Enterprise encounters a tool response with `_meta.ui.resourceUri`, it renders a sandboxed `iframe` and presents a loading indicator to the user until the iframe confirms it is ready:
+
+1. **`ui/initialize` (Request from Iframe to Host):**
+   The application iframe immediately announces itself upon loading:
+   ```json
+   {
+     "jsonrpc": "2.0",
+     "id": 1,
+     "method": "ui/initialize",
+     "params": {
+       "protocolVersion": "2024-11-05",
+       "appInfo": {
+         "name": "retro-breakout",
+         "version": "1.1.0"
+       },
+       "appCapabilities": {
+         "availableDisplayModes": ["inline", "fullscreen"]
+       }
+     }
+   }
+   ```
+
+2. **Host Response (Host to Iframe):**
+   Gemini Enterprise returns its host context and capabilities:
+   ```json
+   {
+     "jsonrpc": "2.0",
+     "id": 1,
+     "result": {
+       "protocolVersion": "2024-11-05",
+       "hostCapabilities": {},
+       "hostContext": { "theme": "dark" }
+     }
+   }
+   ```
+
+3. **`ui/notifications/initialized` (Notification from Iframe to Host):**
+   Upon receiving the host's response (or via eager DOM load fallback), the iframe sends:
+   ```json
+   {
+     "jsonrpc": "2.0",
+     "method": "ui/notifications/initialized",
+     "params": {}
+   }
+   ```
+   **Crucial Step:** Receipt of `ui/notifications/initialized` signals the host to **dismiss the loading spinner** and make the interactive application visible.
+
+---
+
+## ⚡ Performance & Security Architecture
+
+To guarantee smooth 60 FPS performance and 100% compatibility with Gemini Enterprise's strict iframe sandbox:
+
+| Technique | Problem Solved | Implementation Detail |
+| :--- | :--- | :--- |
+| **Zero-Dependency Inlined Bridge** | Avoids CSP/CORS blocks on external CDN imports (`esm.sh`). | Standalone, spec-compliant `postMessage` RPC bridge inlined directly in `index.html`. |
+| **Non-Blocking Initialization** | Prevents top-level `await` from freezing the canvas loop if host handshake lags. | Canvas and game loop start rendering immediately (<16ms) in parallel with handshake. |
+| **In-Memory Asset Caching** | Eliminates synchronous disk I/O on every tool/resource read. | `src/index.ts` pre-reads and caches `index.html` at startup (`cachedGameHtml`). |
+| **Particle Object Pooling** | Eliminates Garbage Collection (GC) thrashing and frame drops on brick explosions. | Pre-allocated 250-particle pool reusing objects without `new` or `splice`. |
+| **Batched Canvas Draw Calls** | Reduces 2D context CPU state churn. | Avoids per-particle `ctx.save()` / `ctx.restore()`; batches draw operations by alpha/color. |
+| **Delta-Time Physics Engine** | Prevents games from running 2x-4x too fast on 120Hz/240Hz monitors. | Uses `performance.now()` delta-time scaling for frame-rate-independent physics. |
+| **SSE Keep-Alive Pings** | Prevents Cloud Run and reverse proxy timeout disconnections. | Emits periodic `: keep-alive\n\n` comments every 25 seconds. |
+
+---
+
+## 🛠️ MCP Tools & Resource Specification
 
 ### Resources
-- `ui://breakout` (`mimeType: text/html;profile=mcp-app`): Serves the complete Breakout game application bundle (HTML, CSS, JavaScript).
+| URI | MIME Type | Description |
+| :--- | :--- | :--- |
+| `ui://breakout` | `text/html;profile=mcp-app` | Serves the complete self-contained Breakout UI bundle. |
 
 ### Tools
-| Tool Name | Description |
-| :--- | :--- |
-| `launch_breakout` | Launches the Breakout game by returning a reference to `ui://breakout` in `_meta.ui`. |
-| `update_game_settings` | Live-adjusts game parameters (`paddleSize`, `ballSpeed`, `lives`, `autopilot`, `godMode`). |
-| `modify_breakout_settings` | Alias tool with flexible property aliases (`paddleWidth`, `paddleSize`). |
-| `trigger_game_cheat` | Applies cheat codes (`god_mode`, `extra_ball`, `slow_ball`, `laser_paddle`, `win_level`). |
-| `apply_breakout_cheat` | Alias for triggering cheat modes with camelCase/snake_case support. |
-| `get_game_config` | Syncs initial and current game configuration for the UI client. |
-| `get_breakout_settings` | Returns active game session state and physics parameters. |
+| Tool Name | Description | Key Parameters |
+| :--- | :--- | :--- |
+| `launch_breakout` | Launches the Breakout game iframe in chat. | *(none)* |
+| `update_game_settings` | Live-adjusts physics parameters. | `paddleSize` (px), `ballSpeed`, `lives`, `autopilot` (bool), `godMode` (bool) |
+| `modify_breakout_settings` | Flexible alias for adjusting game settings. | `paddleWidth`, `paddleSize`, `ballSpeed`, `lives`, `autopilot`, `godMode` |
+| `trigger_game_cheat` | Applies arcade cheat codes. | `cheat` (`"god_mode"`, `"extra_ball"`, `"slow_ball"`, `"laser_paddle"`, `"win_level"`) |
+| `apply_breakout_cheat` | Alias supporting camelCase and snake_case cheat names. | `cheatType`, `cheat` |
+| `get_game_config` | Syncs initial/default configuration for UI. | *(none)* |
+| `get_breakout_settings` | Returns active game session state. | *(none)* |
 
 ---
 
-## 🚀 Getting Started
+## ☁️ Deployment Guide (Google Cloud Run & Gemini Enterprise)
 
-### Prerequisites
-- Node.js 20+
-- npm or yarn
-
-### Installation
-```bash
-# Clone the repository
-git clone git@github.com:spaulds/mcp-app-breakout-ge.git
-cd mcp-app-breakout-ge
-
-# Install dependencies
-npm install
-```
-
-### Local Development
-```bash
-# Run in development mode with nodemon & ts-node
-npm run dev
-```
-The server will start on `http://localhost:8080`.
-
-### Production Build & Run
-```bash
-# Compile TypeScript and copy game assets
-npm run build
-
-# Start the compiled server
-npm start
-```
-
----
-
-## 🐳 Running with Docker
-
-You can containerize and run the server locally or in any container platform:
+### 1. Deploy to Google Cloud Run
+Deploy the application directly to Cloud Run in your GCP project:
 
 ```bash
-# Build the Docker image
-docker build -t mcp-app-breakout-ge .
-
-# Run the container
-docker run -p 8080:8080 mcp-app-breakout-ge
-```
-
----
-
-## ☁️ Deploying to Google Cloud Run
-
-To connect the app to the Gemini Enterprise Agent Platform, deploy it as a publicly accessible service on Google Cloud Run:
-
-```bash
-gcloud run deploy mcp-app-breakout-ge \
+gcloud run deploy mcp-breakout-arcade \
   --source . \
   --platform managed \
   --region us-central1 \
+  --project <YOUR_GCP_PROJECT_ID> \
   --allow-unauthenticated \
   --port 8080
 ```
 
-Once deployed, Cloud Run will provide a service URL (e.g., `https://mcp-app-breakout-ge-xyz-uc.a.run.app`).
+Note the generated service URL (e.g. `https://mcp-breakout-arcade-xxxxx.us-central1.run.app`).
 
----
+### 2. Grant Discovery Engine Invoker Access (Private Deployments)
+If deploying privately without `--allow-unauthenticated`, grant the Discovery Engine Service Agent permission to invoke your service:
 
-## ⚙️ Connecting to Gemini Enterprise Agent Platform (GEAP)
+```bash
+gcloud run services add-iam-policy-binding mcp-breakout-arcade \
+  --member="serviceAccount:service-<PROJECT_NUMBER>@gcp-sa-discoveryengine.iam.gserviceaccount.com" \
+  --role="roles/run.invoker" \
+  --region=us-central1
+```
 
-1. Open your **Gemini Enterprise / Agent Platform Console**.
-2. Navigate to **Data Connectors / Extensions / MCP Agents** and choose **Register Custom MCP Server**.
+### 3. Register Custom MCP Server in Gemini Enterprise Console
+1. In the Google Cloud Console, navigate to **Agent Builder (Discovery Engine) > Data Stores**.
+2. Click **Create Data Store** and select **Custom MCP Server**.
 3. Fill in the connection settings:
-   - **MCP Server URL**: `https://<YOUR_CLOUD_RUN_URL>/mcp`
-   - **Authentication Type**: OAuth 2.0 (or None if unauthenticated)
-   - **Authorization Endpoint**: `https://<YOUR_CLOUD_RUN_URL>/authorize`
-   - **Token Endpoint**: `https://<YOUR_CLOUD_RUN_URL>/token`
-   - **Client ID / Secret**: Any placeholder value (handled by the mock OAuth service)
-4. Upload or verify the tool definitions using [`toolspec.json`](file:///Users/aspaulding/code/google/mcp-app-breakout-ge/toolspec.json).
-5. Save and activate the connector.
-6. In your Gemini Enterprise chat session, prompt:
-   > *"Let's play a game of Breakout!"*
+   - **MCP Server URL:** `https://<YOUR_CLOUD_RUN_URL>/mcp`
+   - **Authorization URL:** `https://<YOUR_CLOUD_RUN_URL>/authorize` (or `https://accounts.google.com/o/oauth2/auth`)
+   - **Token URL:** `https://<YOUR_CLOUD_RUN_URL>/token` (or `https://oauth2.googleapis.com/token`)
+   - **Client ID & Secret:** Placeholder or OAuth Client credentials
+   - **Enable PKCE Support:** Enabled
+4. Save and activate the Data Store.
+5. In the **Actions** tab, click **Reload custom actions** and enable the tools (`launch_breakout`, `update_game_settings`, etc.).
 
 ---
 
-## 📂 Project Structure
+## 💻 Local Development
 
+### Prerequisites
+- Node.js 20+
+- npm
+
+### Installation & Run
+```bash
+# Install dependencies
+npm install
+
+# Start development server with auto-reload
+npm run dev
+
+# Or build and start production server
+npm run build
+npm start
 ```
-mcp-app-breakout-ge/
-├── Dockerfile              # Multi-stage production container build
-├── package.json            # Node.js project manifest & scripts
-├── toolspec.json           # MCP tool declarations and input schemas
-├── tsconfig.json           # TypeScript configuration
-├── .gitignore              # Git ignored files (node_modules, dist, etc.)
-└── src/
-    ├── index.ts            # MCP Server, SSE/RPC routes, OAuth mock endpoints
-    └── game/
-        └── index.html      # Self-contained Breakout UI with MCP App bridge
-```
+
+* **Local MCP SSE Endpoint:** `http://localhost:8080/mcp`
+* **Local Direct Game Preview:** `http://localhost:8080/game`
 
 ---
 
 ## 📄 License
-
 Apache 2.0
