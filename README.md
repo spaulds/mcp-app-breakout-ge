@@ -1,236 +1,126 @@
-# 🕹️ Retro Breakout - Secure Enterprise MCP App for Gemini Enterprise
+# 🕹️ Retro Breakout — Secure Enterprise MCP App for Gemini Enterprise
 
-An interactive, retro Atari-style Breakout arcade game built as a **Model Context Protocol (MCP) App** (UI Extension) designed to run natively and securely inside the **Gemini Enterprise Agent Platform (GEAP) / Discovery Engine**.
+An interactive Atari-style Breakout arcade game built as a **Model Context Protocol (MCP) App** (UI Extension) designed to showcase secure, governed application execution inside the **Gemini Enterprise Agent Platform (GEAP)**.
 
 When a user in Gemini Enterprise asks:
 > *"Let's play a game"* or *"Launch Breakout"*
 
-Gemini calls the MCP server's `launch_breakout` tool. The tool response references an interactive UI resource (`ui://breakout`), prompting Gemini Enterprise to fetch the HTML5 bundle over the authenticated MCP protocol and render the interactive canvas game directly inside the conversation thread.
-
-The user and the agent can interact with the game in real-time, live-adjusting gameplay physics (paddle width, ball speed, lives) or activating cheat codes (like **Twin Laser Cannons**, **Mega Paddle**, and **God Mode**) via natural language or an in-app settings HUD.
-
-This project implements the official [Model Context Protocol Apps Specification](https://github.com/modelcontextprotocol/ext-apps) within Google Cloud's zero-trust enterprise security architecture.
+Gemini executes the MCP server's `launch_breakout` tool. The response returns an interactive UI resource URI (`ui://breakout`), prompting Gemini Enterprise to stream the self-contained HTML5 canvas game directly into the chat conversation. Users can play in real-time while the agent live-adjusts physics or activates cheat codes (**Twin Laser Cannons**, **Mega Paddle**, **God Mode**).
 
 ---
 
-## 🏛️ Enterprise Architecture: The 4 Pillars of Governed MCP Apps
+## 🏛️ Why GEAP? The 4 Pillars of Governed MCP Apps
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor User as 👤 Employee (Gemini Enterprise)
-    participant GE as 🧠 Gemini Enterprise Agent<br/>(SPIFFE Agent Identity)
+    participant GE as 🧠 Gemini Enterprise Agent<br/>(SPIFFE Identity)
     participant AGW as 🛡️ Agent Gateway (demo-gateway2)<br/>(AuthzPolicy + Model Armor)
-    participant REG as 📚 Agent Registry<br/>(Central Tool Catalog)
+    participant REG as 📚 Agent Registry<br/>(Tool Catalog)
     participant CR as 🔒 Private Cloud Run<br/>(roles/run.invoker Only)
 
     Note over GE,REG: 1. Zero-Plumbing Discovery
-    GE->>REG: Discover MCP Tools via Gateway
-    REG-->>GE: Tool definitions + UI resource (ui://breakout)
-
-    Note over User,GE: 2. Interactive Request
-    User->>GE: "Let's play Atari Breakout!"
+    GE->>REG: Discover Tools & UI Resource (ui://breakout)
     
-    Note over GE,AGW: 3. Zero-Trust Egress Check
+    Note over User,GE: 2. Natural Language Trigger
+    User->>GE: "Let's play Breakout!"
+    
+    Note over GE,AGW: 3. Governed Zero-Trust Egress
     GE->>AGW: mTLS (SPIFFE Identity: principal://agents...)
-    Note over AGW: • Validates Agent Identity<br/>• Enforces AuthzPolicy (ALLOW tools/call)<br/>• Model Armor checks payload safety<br/>• Mints Google OIDC token
-
+    Note over AGW: • Validates Agent Identity<br/>• Evaluates AuthzPolicy<br/>• Model Armor sanitizes payloads
     AGW->>CR: Authenticated POST /mcp (launch_breakout)
-    CR-->>AGW: Tool Result with _meta.ui.resourceUri: "ui://breakout"
-    AGW-->>GE: Forwarded MCP Tool Response
+    CR-->>AGW: Result (_meta.ui.resourceUri: "ui://breakout")
+    AGW-->>GE: Forwarded MCP Response
 
-    GE->>AGW: MCP resources/read ("ui://breakout")
+    Note over GE,CR: 4. Authenticated Zero-CDN UI Delivery
+    GE->>AGW: resources/read ("ui://breakout")
     AGW->>CR: Authenticated POST /mcp (resources/read)
-    CR-->>AGW: Streamed HTML5 Canvas Game Bundle
-    AGW-->>GE: App Payload Delivered
-    GE->>User: Renders Interactive Retro Game in Chat!
+    CR-->>AGW: Streamed HTML5 Canvas Bundle
+    AGW-->>GE: App Payload
+    GE->>User: Renders Interactive Canvas in Chat!
 ```
 
 ### 1. Centralized Catalog via Agent Registry
-Eliminates hardcoded webhooks and manual connector sprawl. Services are registered centrally with their schemas, interfaces, and `_meta.ui` tags so Gemini Enterprise discovers tools automatically behind **Agent Gateway**.
+Eliminates brittle webhooks and connector sprawl. Services publish schemas, interfaces, and `_meta.ui` tags centrally so agents discover tools dynamically.
 
-### 2. Zero-Trust Ingress via Agent Identity & Private Cloud Run
-The backend Cloud Run service runs with `--no-allow-unauthenticated` (public internet access disabled). It strictly accepts incoming requests with verified Google Cloud OIDC tokens from authorized Service Agents:
-- **Discovery Engine Service Agent** (`service-<PROJECT_NUMBER>@gcp-sa-discoveryengine.iam.gserviceaccount.com`)
-- **Agent Gateway Service Agent** (`service-<PROJECT_NUMBER>@gcp-sa-agentgateway.iam.gserviceaccount.com`)
-- **Service Extensions Data Plane Agent** (`service-<PROJECT_NUMBER>@gcp-sa-dep.iam.gserviceaccount.com`)
+### 2. Zero-Trust Ingress & Private Workloads
+Backend Cloud Run services run private (`--no-allow-unauthenticated`). Ingress is restricted to verified Google Cloud OIDC tokens from authorized Service Agents (`gcp-sa-discoveryengine`, `gcp-sa-agentgateway`).
 
-### 3. Egress Governance via Agent Gateway & Model Armor
-Outbound tool calls flow through **Agent Gateway** (`demo-gateway2`):
-- **`REQUEST_AUTHZ` (Identity & Protocol Gate):** Verifies the agent's cryptographic SPIFFE identity (`principal://agents.global...`) over mTLS and evaluates granular tool permissions.
-- **`CONTENT_AUTHZ` (Deep Payload Inspection & Model Armor):** Sanitizes tool arguments in flight, blocking prompt injections, jailbreak attempts, or malicious parameter tampering before requests hit the backend.
+### 3. Deep Egress Governance & Model Armor
+Outbound tool calls route through **Agent Gateway**:
+- **Identity Gate (`REQUEST_AUTHZ`):** Enforces cryptographic SPIFFE identities (`principal://agents.global...`) over mTLS with fine-grained tool authorization policies.
+- **Payload Inspection (`CONTENT_AUTHZ`):** Model Armor inspects and sanitizes tool arguments in flight, defending against prompt injections and malicious parameter tampering.
 
-### 4. Zero-CDN Delivery via MCP Apps Protocol
-In standard web development, applications load assets from external CDNs, creating CORS and Content Security Policy (CSP) vulnerabilities. In MCP Apps, the entire HTML/JS canvas bundle is delivered directly through the authenticated MCP connection (`resources/read: ui://breakout`) and safely mounted inside an isolated iframe.
+### 4. Zero-CDN Secure UI Delivery
+The entire HTML5/JS canvas bundle is delivered directly through the authenticated MCP channel (`resources/read`), running inside a sandboxed iframe with dynamic `postMessage` origin locking — eliminating external CDN dependencies, XSS vectors, and asset tampering.
 
 ---
 
-## 🎮 Gameplay, Weapons & Interactive Capabilities
+## 🎮 Features & MCP Tools
 
-| Feature | Description | Controls |
+| Tool / Capability | Description | Input Parameters |
 | :--- | :--- | :--- |
-| **`⚡ Laser Cannons`** (`laser_paddle`) | Equips the paddle with twin blaster turrets; fires laser bolts upward that disintegrate bricks. | **`SPACE`**, **`F`**, or **Canvas Click/Tap** |
-| **`📏 Mega Paddle`** (`mega_paddle`) | Expands paddle width to 220px for easier ball defense. | Natural language or Settings Drawer |
-| **`🛡️ God Mode`** (`god_mode`) | Turns paddle cyan and bounces the ball safely off the bottom floor. | Natural language or Settings Drawer |
-| **`🤖 AI Autopilot`** (`autopilot`) | Uses an onboard tracking algorithm to align the paddle to the ball trajectory automatically. | Natural language or Settings Drawer |
-| **`🔄 Level Progression & State Persistence`** | Score, lives, active weapons (Laser Cannons), and physics settings seamlessly persist across levels and chat turns via `sessionStorage`. | Handled automatically |
-| **`⚙️ Settings HUD Drawer`** | Unobtrusive settings menu positioned in the bottom-right corner bezel so it never overlaps the scoreboard. | Press **`[ESC]`** or click **`⚙️ SETTINGS`** |
+| **`launch_breakout`** | Initializes the Breakout UI iframe inside the chat thread. | *(none)* |
+| **`update_game_settings`** | Live-adjusts game physics and gameplay rules. | `paddleSize` (40–350px), `ballSpeed` (1–15), `lives` (1–20), `autopilot` (bool), `godMode` (bool) |
+| **`trigger_game_cheat`** | Activates arcade cheat codes in real time. | `cheat`: `"laser_paddle"` (Twin Blasters), `"mega_paddle"` (220px), `"god_mode"`, `"extra_ball"`, `"slow_ball"`, `"win_level"` |
+| **`ui://breakout`** *(Resource)* | Self-contained HTML5 canvas game with particle physics and session persistence. | *(text/html;profile=mcp-app)* |
 
 ---
 
-## 🤝 The MCP Apps 3-Way Handshake Protocol
+## 🔐 Standards-Compliant Cloud-Agnostic OAuth 2.0
 
-When Gemini Enterprise encounters a tool response with `_meta.ui.resourceUri`, it renders a sandboxed `iframe` and presents a loading indicator to the user until the iframe confirms it is ready:
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant GE as Gemini Enterprise (Host)
-    participant UI as App Iframe (Breakout Canvas)
-
-    GE->>UI: Mounts Sandboxed Iframe (Displays Blue Loading Spinner)
-    UI->>GE: window.parent.postMessage({ method: "ui/initialize", id: 1, ... })
-    GE-->>UI: window.postMessage({ id: 1, result: { hostContext: { theme: "dark" } } })
-    UI->>GE: window.parent.postMessage({ method: "ui/notifications/initialized", params: {} })
-    Note over GE: Spinner is dismissed -> Interactive Canvas revealed instantly!
-```
+Includes a built-in, zero-dependency OAuth 2.0 authorization server (RFC 6749 & RFC 7636):
+- **Authorization Code Flow with PKCE (`S256` & `plain`)**: Compatible with Gemini Enterprise, Discovery Engine, Claude Desktop, Cursor, and enterprise MCP proxies.
+- **Client Credentials & Token Rotation**: Supports direct server-to-server integrations with automatic cryptographic token rotation.
+- **Cloud-Agnostic Portability**: Built entirely with native Node.js `crypto` primitives — portable to Google Cloud Run, AWS App Runner, Azure Container Apps, or Kubernetes without vendor lock-in.
 
 ---
 
-## 🛠️ MCP Tools & Resource Specification
-
-### Resources
-| URI | MIME Type | Description |
-| :--- | :--- | :--- |
-| `ui://breakout` | `text/html;profile=mcp-app` | Serves the complete self-contained Breakout UI bundle. |
-
-### Tools
-| Tool Name | Description | Key Parameters |
-| :--- | :--- | :--- |
-| `launch_breakout` | Launches the Breakout game iframe in chat. | *(none)* |
-| `update_game_settings` | Live-adjusts physics parameters. | `paddleSize` (px), `ballSpeed`, `lives`, `autopilot` (bool), `godMode` (bool) |
-| `modify_breakout_settings` | Flexible alias for adjusting game settings. | `paddleWidth`, `paddleSize`, `ballSpeed`, `lives`, `autopilot`, `godMode` |
-| `trigger_game_cheat` | Applies arcade cheat codes. | `cheat` (`"mega_paddle"`, `"laser_paddle"`, `"god_mode"`, `"extra_ball"`, `"slow_ball"`, `"win_level"`) |
-| `apply_breakout_cheat` | Alias supporting camelCase and snake_case cheat names. | `cheatType`, `cheat` |
-| `get_game_config` | Syncs initial/default configuration for UI. | *(none)* |
-| `get_breakout_settings` | Returns active game session state. | *(none)* |
-
----
-
-## ☁️ Step-by-Step Google Cloud Deployment Guide
-
-### 1. Deploy Private Service to Cloud Run
-Deploy with unauthenticated access disabled:
+## 🚀 Quick Deployment (Google Cloud)
 
 ```bash
+# 1. Deploy private Cloud Run service
 gcloud run deploy mcp-breakout-arcade \
   --source . \
-  --platform managed \
   --region us-central1 \
   --project <PROJECT_ID> \
-  --no-allow-unauthenticated \
-  --port 8080
-```
+  --no-allow-unauthenticated
 
-### 2. Configure IAM Access for Service Agents
-Grant `roles/run.invoker` strictly to the Discovery Engine and Agent Gateway service agents:
-
-```bash
-# Discovery Engine Service Agent
+# 2. Grant Invoker role to Discovery Engine & Agent Gateway Service Agents
 gcloud run services add-iam-policy-binding mcp-breakout-arcade \
   --member="serviceAccount:service-<PROJECT_NUMBER>@gcp-sa-discoveryengine.iam.gserviceaccount.com" \
   --role="roles/run.invoker" \
   --region=us-central1 \
   --project=<PROJECT_ID>
 
-# Agent Gateway Service Agent
 gcloud run services add-iam-policy-binding mcp-breakout-arcade \
   --member="serviceAccount:service-<PROJECT_NUMBER>@gcp-sa-agentgateway.iam.gserviceaccount.com" \
   --role="roles/run.invoker" \
   --region=us-central1 \
   --project=<PROJECT_ID>
 
-# Service Extensions Data Plane Agent
-gcloud run services add-iam-policy-binding mcp-breakout-arcade \
-  --member="serviceAccount:service-<DEP_PROJECT_NUMBER>@gcp-sa-dep.iam.gserviceaccount.com" \
-  --role="roles/run.invoker" \
-  --region=us-central1 \
-  --project=<PROJECT_ID>
+# 3. Register service in Agent Registry / Gemini Enterprise Console
+# Register URL: https://<CLOUD_RUN_URL>/mcp
+# Authorize URL: https://<CLOUD_RUN_URL>/authorize (PKCE S256)
+# Token URL: https://<CLOUD_RUN_URL>/token
 ```
-
-### 3. Grant Agent Registry & Gateway Permissions
-Create a custom IAM role for the Discovery Engine service agent to browse the registry and use the gateway:
-
-```bash
-gcloud iam roles create geAgentRegistryViewer \
-  --project=<PROJECT_ID> \
-  --title="Gemini Enterprise Agent Registry Viewer" \
-  --permissions="agentregistry.agents.list,agentregistry.agents.get,agentregistry.agents.search,agentregistry.mcpServers.list,agentregistry.mcpServers.get,agentregistry.mcpServers.search,networkservices.agentGateways.list,networkservices.agentGateways.get,networkservices.agentGateways.use"
-
-gcloud projects add-iam-policy-binding <PROJECT_ID> \
-  --member="serviceAccount:service-<PROJECT_NUMBER>@gcp-sa-discoveryengine.iam.gserviceaccount.com" \
-  --role="projects/<PROJECT_ID>/roles/geAgentRegistryViewer"
-```
-
-### 4. Register the Service in Google Cloud Agent Registry
-Publish the service and tool spec into the Agent Registry:
-
-```bash
-SPEC_CONTENT=$(cat toolspec.json)
-
-gcloud agent-registry services update <SERVICE_ID> \
-  --project=<PROJECT_ID> \
-  --location=us-central1 \
-  --interfaces='[{"protocolBinding": "JSONRPC", "url": "https://mcp-breakout-arcade-<PROJECT_NUMBER>.us-central1.run.app/mcp"}]' \
-  --mcp-server-spec-type=tool-spec \
-  --mcp-server-spec-content="$SPEC_CONTENT"
-```
-
-### 5. Connect in Gemini Enterprise Console
-1. Navigate to **Gemini Enterprise / Agent Builder** &rarr; **Data Stores** &rarr; **Add Data Store**.
-2. Select **Agent Gateway / Agent Registry** (or **Custom MCP Server**).
-3. Fill in the connection settings:
-   - **MCP Server URL:** `https://<YOUR_CLOUD_RUN_URL>/mcp`
-   - **Authorization URL:** `https://<YOUR_CLOUD_RUN_URL>/authorize`
-   - **Token URL:** `https://<YOUR_CLOUD_RUN_URL>/token`
-   - **PKCE Support:** Enabled (`S256`)
-4. Activate the connector and verify that tools (`launch_breakout`, `update_game_settings`, `trigger_game_cheat`) are recognized.
-
----
-
-## 🔐 Standards-Compliant Cloud-Agnostic OAuth 2.0 (RFC 6749 & RFC 7636)
-
-This MCP server includes an integrated, zero-dependency OAuth 2.0 authorization server that supports:
-- **Authorization Code Flow with PKCE (`S256` & `plain`)**: Compatible with Gemini Enterprise, Claude Desktop, Cursor, and enterprise MCP proxies.
-- **Client Credentials Flow**: For direct server-to-server or automated agent integrations.
-- **Refresh Token Rotation**: Automatic token rotation with ephemeral cryptographic secrets.
-- **Cloud-Agnostic Architecture**: Implemented with native Node.js `crypto` primitives without vendor lock-in, making it portable across Google Cloud Run, AWS App Runner, Azure Container Apps, or local Kubernetes clusters.
 
 ---
 
 ## 💻 Local Development
 
-### Prerequisites
-- Node.js 20+
-- npm
-
-### Installation & Run
 ```bash
-# Install dependencies
+# Install and run
 npm install
-
-# Start development server with auto-reload
 npm run dev
 
-# Or build and start production server
-npm run build
-npm start
+# Endpoints:
+# • MCP SSE:          http://localhost:8080/mcp
+# • MCP JSON-RPC:     http://localhost:8080/mcp (POST)
+# • OAuth 2.0 PKCE:   http://localhost:8080/authorize & /token
+# • Direct Preview:   http://localhost:8080/game
 ```
-
-* **Local MCP SSE Endpoint:** `http://localhost:8080/mcp`
-* **Local Stateless JSON-RPC:** `http://localhost:8080/mcp` (POST)
-* **OAuth 2.0 Endpoints:** `http://localhost:8080/authorize` & `http://localhost:8080/token`
-* **Local Direct Game Preview:** `http://localhost:8080/game`
 
 ---
 
