@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Retro Atari Breakout</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Retro Atari Breakout - MCP App</title>
   <style>
     * {
       box-sizing: border-box;
@@ -20,19 +21,25 @@
       justify-content: center;
       min-height: 100vh;
       overflow: hidden;
+      user-select: none;
+      -webkit-user-select: none;
     }
 
-    /* Screen scanlines and container */
+    /* Arcade screen cabinet and responsive canvas container */
     #arcade-cabinet {
       position: relative;
-      border: 4px solid #333;
+      border: 3px solid #333;
       background-color: #050505;
-      padding: 10px;
-      box-shadow: 0 0 20px rgba(255, 255, 255, 0.1);
-      border-radius: 4px;
-      max-width: 100%;
+      padding: 6px;
+      box-shadow: 0 0 25px rgba(0, 255, 128, 0.15), inset 0 0 15px rgba(0, 0, 0, 0.8);
+      border-radius: 6px;
+      max-width: 98vw;
+      max-height: 85vh;
       aspect-ratio: 4/3;
       width: 800px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
 
     canvas {
@@ -41,9 +48,10 @@
       height: 100%;
       background: #000;
       image-rendering: pixelated;
+      image-rendering: crisp-edges;
     }
 
-    /* Overlay CRT Scanline Effect */
+    /* Optimized CRT Scanline & Phosphor Grid Overlay */
     #scanlines {
       position: absolute;
       top: 0;
@@ -52,30 +60,40 @@
       height: 100%;
       background: linear-gradient(
         rgba(18, 16, 16, 0) 50%, 
-        rgba(0, 0, 0, 0.25) 50%
+        rgba(0, 0, 0, 0.28) 50%
       ), linear-gradient(
         90deg,
-        rgba(255, 0, 0, 0.06),
+        rgba(255, 0, 0, 0.04),
         rgba(0, 255, 0, 0.02),
-        rgba(0, 0, 255, 0.06)
+        rgba(0, 0, 255, 0.04)
       );
-      background-size: 100% 4px, 6px 100%;
+      background-size: 100% 4px, 4px 100%;
       pointer-events: none;
       z-index: 10;
+      will-change: transform;
     }
 
-    /* Controls Overlay for Help */
+    /* Controls tip & status bar */
     #controls-tip {
-      margin-top: 12px;
-      font-size: 14px;
-      color: #888;
+      margin-top: 8px;
+      font-size: 12px;
+      color: #aaa;
       text-align: center;
       text-transform: uppercase;
       letter-spacing: 1px;
+      line-height: 1.4;
     }
 
-    .neon-text {
-      text-shadow: 0 0 5px #fff, 0 0 10px #ff007f;
+    .badge {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 11px;
+      font-weight: bold;
+      background: #222;
+      color: #00ff66;
+      border: 1px solid #00ff66;
+      margin-left: 6px;
     }
   </style>
 </head>
@@ -87,82 +105,199 @@
   </div>
 
   <div id="controls-tip">
-    ◄ LEFT Arrow | RIGHT Arrow ► to Move • SPACE to Start/Pause • AI Autopilot Available
+    ◄ LEFT / RIGHT ► Arrow Keys to Move • SPACE to Start/Pause • Tap/Drag on Mobile
+    <span id="ai-status" class="badge" style="display:none;">AI AUTOPILOT ACTIVE</span>
   </div>
 
-  <!-- Load MCP Apps SDK as an ES module directly from CDN -->
-  <script type="module">
-    import { App } from "https://esm.sh/@modelcontextprotocol/ext-apps";
+  <script>
+    /**
+     * Resilient, Zero-Dependency MCP Apps Protocol Bridge
+     * Complies with @modelcontextprotocol/ext-apps protocol over postMessage.
+     * Works inside sandboxed enterprise iframes with strict CSPs.
+     */
+    class MCPAppsBridge {
+      constructor() {
+        this.connected = false;
+        this.hostContext = {};
+        this.ontoolresult = null;
+        this.onsettingschange = null;
 
-    // Initialize MCP App
-    let mcpApp = null;
-    try {
-      mcpApp = new App();
-      await mcpApp.connect();
-      console.log("Connected to MCP Host successfully!");
-    } catch (e) {
-      console.warn("Failed to connect to MCP host. Running in standalone mode.", e);
+        // Listen for standard MCP Apps postMessage events from host window
+        window.addEventListener("message", (event) => {
+          this.handleIncomingMessage(event);
+        });
+
+        // Announce UI readiness to parent host window
+        this.sendHandshake();
+      }
+
+      sendHandshake() {
+        try {
+          if (window.parent && window.parent !== window) {
+            window.parent.postMessage({
+              jsonrpc: "2.0",
+              method: "ui/initialize",
+              params: {
+                protocolVersion: "2024-11-05",
+                capabilities: {
+                  tools: true,
+                  contextUpdates: true
+                }
+              }
+            }, "*");
+            this.connected = true;
+          }
+        } catch (err) {
+          console.warn("[MCP Bridge] Running in isolated standalone mode.", err);
+        }
+      }
+
+      handleIncomingMessage(event) {
+        const data = event.data;
+        if (!data || typeof data !== "object") return;
+
+        // Handle tool result notifications from Gemini Enterprise
+        if (data.method === "ui/notifications/tool-result" || data.method === "tools/call_result") {
+          const result = data.params?.result || data.params || data.result;
+          this.processToolPayload(result);
+        }
+
+        // Direct tool invocation results (JSON-RPC responses)
+        if (data.result && (data.result.content || data.result._meta)) {
+          this.processToolPayload(data.result);
+        }
+
+        // Host context changes (e.g., theme, locale)
+        if (data.method === "ui/notifications/host-context-changed") {
+          this.hostContext = data.params || {};
+        }
+
+        // Ping / Heartbeat
+        if (data.method === "ping") {
+          if (event.source && data.id) {
+            event.source.postMessage({ jsonrpc: "2.0", id: data.id, result: {} }, "*");
+          }
+        }
+      }
+
+      processToolPayload(payload) {
+        if (!payload) return;
+        try {
+          // Extract text content from tool result
+          let rawText = "";
+          if (Array.isArray(payload.content)) {
+            for (const item of payload.content) {
+              if (item.type === "text" && item.text) {
+                rawText += item.text;
+              }
+            }
+          } else if (typeof payload.text === "string") {
+            rawText = payload.text;
+          } else if (typeof payload === "string") {
+            rawText = payload;
+          }
+
+          if (rawText && rawText.includes("{") && rawText.includes("}")) {
+            const startIdx = rawText.indexOf("{");
+            const endIdx = rawText.lastIndexOf("}") + 1;
+            const parsed = JSON.parse(rawText.substring(startIdx, endIdx));
+            if (this.ontoolresult) {
+              this.ontoolresult(parsed);
+            }
+          }
+        } catch (e) {
+          console.warn("[MCP Bridge] Error parsing tool result payload:", e);
+        }
+      }
+
+      async updateModelContext(messageText, metadata = {}) {
+        if (!window.parent || window.parent === window) return;
+        try {
+          window.parent.postMessage({
+            jsonrpc: "2.0",
+            method: "ui/notifications/context-update",
+            params: {
+              content: [
+                {
+                  type: "text",
+                  text: messageText
+                }
+              ],
+              _meta: metadata
+            }
+          }, "*");
+        } catch (e) {
+          console.warn("[MCP Bridge] Failed to send context update to host:", e);
+        }
+      }
     }
 
-    const canvas = document.getElementById('gameCanvas');
-    const ctx = canvas.getContext('2d');
+    // Initialize MCP Bridge (non-blocking)
+    const mcp = new MCPAppsBridge();
 
-    // Default Game Configuration
-    let config = {
+    // Setup Canvas and Rendering Context
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d', { alpha: false }); // High-performance opaque canvas
+    const aiStatusBadge = document.getElementById('ai-status');
+
+    // Live Game Configuration
+    const config = {
       paddleSize: 120,
-      ballSpeed: 5,
+      ballSpeed: 5.5,
       lives: 3,
       autopilot: false,
       godMode: false
     };
 
-    // Game state variables
+    // Game State
     let score = 0;
-    let highScore = localStorage.getItem('breakout_high_score') || 0;
+    let highScore = 0;
+    try {
+      highScore = Number(localStorage.getItem('breakout_high_score') || 0);
+    } catch(e) {}
+
     let currentLives = config.lives;
     let isPaused = true;
     let gameOver = false;
     let gameWon = false;
     let level = 1;
+    let lastSentScore = 0;
 
-    // Paddle state
-    let paddle = {
+    // Paddle
+    const paddle = {
       x: canvas.width / 2 - config.paddleSize / 2,
-      y: canvas.height - 40,
+      y: canvas.height - 38,
       width: config.paddleSize,
-      height: 15,
-      speed: 8,
-      dx: 0
+      height: 14,
+      speed: 8.5
     };
 
-    // Ball state
-    let ball = {
+    // Ball
+    const ball = {
       x: canvas.width / 2,
-      y: canvas.height - 60,
-      radius: 8,
+      y: canvas.height - 56,
+      radius: 7,
       speed: config.ballSpeed,
       dx: 0,
       dy: 0,
       active: false
     };
 
-    // Brick settings
+    // Bricks Grid
     const brickRowCount = 5;
     const brickColumnCount = 10;
     const brickWidth = 72;
     const brickHeight = 18;
     const brickPadding = 4;
-    const brickOffsetTop = 100;
+    const brickOffsetTop = 95;
     const brickOffsetLeft = 24;
 
-    // Brick colors corresponding to Atari values
-    // Red (top) = 7 pts, Orange = 5 pts, Yellow = 3 pts, Green = 2 pts, Blue (bottom) = 1 pt
     const rowProperties = [
-      { color: '#ff003c', points: 7 }, // Red
+      { color: '#ff0040', points: 7 }, // Red
       { color: '#ff7700', points: 5 }, // Orange
       { color: '#ffcc00', points: 3 }, // Yellow
       { color: '#00ff66', points: 2 }, // Green
-      { color: '#00ccff', points: 1 }  // Blue
+      { color: '#00ccff', points: 1 }  // Cyan
     ];
 
     let bricks = [];
@@ -170,85 +305,103 @@
       bricks = [];
       for (let c = 0; c < brickColumnCount; c++) {
         bricks[c] = [];
-        for (let r = 0; c < brickColumnCount && r < brickRowCount; r++) {
-          bricks[c][r] = { 
-            x: 0, 
-            y: 0, 
-            status: 1, 
-            color: rowProperties[r].color, 
-            points: rowProperties[r].points 
+        for (let r = 0; r < brickRowCount; r++) {
+          bricks[c][r] = {
+            x: (c * (brickWidth + brickPadding)) + brickOffsetLeft,
+            y: (r * (brickHeight + brickPadding)) + brickOffsetTop,
+            status: 1,
+            color: rowProperties[r].color,
+            points: rowProperties[r].points
           };
         }
       }
     }
 
-    // Particle system for explosion effect
-    let particles = [];
-    function createExplosion(x, y, color) {
-      const particleCount = 15;
-      for (let i = 0; i < particleCount; i++) {
-        particles.push({
-          x: x,
-          y: y,
-          size: Math.random() * 4 + 3,
-          color: color,
-          vx: (Math.random() - 0.5) * 6,
-          vy: (Math.random() - 0.5) * 6 - 2, // Slight upward bias
-          alpha: 1,
-          life: 1.0,
-          decay: Math.random() * 0.02 + 0.015
-        });
+    // High-Performance Particle Object Pool (Zero Garbage Collection Churn)
+    const MAX_PARTICLES = 250;
+    const particlePool = [];
+    for (let i = 0; i < MAX_PARTICLES; i++) {
+      particlePool.push({
+        active: false,
+        x: 0,
+        y: 0,
+        size: 0,
+        color: '#fff',
+        vx: 0,
+        vy: 0,
+        alpha: 1.0,
+        decay: 0.02
+      });
+    }
+
+    function spawnExplosion(x, y, color, count = 16) {
+      let spawned = 0;
+      for (let i = 0; i < MAX_PARTICLES && spawned < count; i++) {
+        const p = particlePool[i];
+        if (!p.active) {
+          p.active = true;
+          p.x = x;
+          p.y = y;
+          p.size = Math.random() * 4 + 2.5;
+          p.color = color;
+          p.vx = (Math.random() - 0.5) * 7;
+          p.vy = (Math.random() - 0.5) * 7 - 2;
+          p.alpha = 1.0;
+          p.decay = Math.random() * 0.025 + 0.018;
+          spawned++;
+        }
       }
     }
 
-    function updateParticles() {
-      for (let i = particles.length - 1; i >= 0; i--) {
-        const p = particles[i];
-        p.x += p.vx;
-        p.y += p.vy;
-        p.vy += 0.1; // Gravity
-        p.alpha -= p.decay;
-        p.life -= p.decay;
-        if (p.life <= 0 || p.alpha <= 0) {
-          particles.splice(i, 1);
+    function updateParticles(dt) {
+      for (let i = 0; i < MAX_PARTICLES; i++) {
+        const p = particlePool[i];
+        if (p.active) {
+          p.x += p.vx * dt;
+          p.y += p.vy * dt;
+          p.vy += 0.15 * dt; // Gravity
+          p.alpha -= p.decay * dt;
+          if (p.alpha <= 0) {
+            p.active = false;
+          }
         }
       }
     }
 
     function drawParticles() {
-      particles.forEach(p => {
-        ctx.save();
-        ctx.globalAlpha = p.alpha;
-        ctx.fillStyle = p.color;
-        // Flat square arcade particles
-        ctx.fillRect(p.x, p.y, p.size, p.size);
-        ctx.restore();
-      });
+      for (let i = 0; i < MAX_PARTICLES; i++) {
+        const p = particlePool[i];
+        if (p.active) {
+          ctx.globalAlpha = Math.max(0, p.alpha);
+          ctx.fillStyle = p.color;
+          ctx.fillRect(p.x, p.y, p.size, p.size);
+        }
+      }
+      ctx.globalAlpha = 1.0;
     }
 
-    // Initial setups
-    initBricks();
-
-    // Input handlers
+    // Input Handling
     let rightPressed = false;
     let leftPressed = false;
 
-    document.addEventListener("keydown", (e) => {
+    window.addEventListener("keydown", (e) => {
       if (e.key === "Right" || e.key === "ArrowRight") {
         rightPressed = true;
       } else if (e.key === "Left" || e.key === "ArrowLeft") {
         leftPressed = true;
       } else if (e.key === " " || e.code === "Space") {
-        e.preventDefault(); // Stop page scrolling
+        e.preventDefault();
         if (gameOver || gameWon) {
           resetGame();
+        } else if (!ball.active) {
+          launchBall();
         } else {
           isPaused = !isPaused;
         }
       }
     });
 
-    document.addEventListener("keyup", (e) => {
+    window.addEventListener("keyup", (e) => {
       if (e.key === "Right" || e.key === "ArrowRight") {
         rightPressed = false;
       } else if (e.key === "Left" || e.key === "ArrowLeft") {
@@ -256,15 +409,20 @@
       }
     });
 
-    // Touch and Mouse support
-    canvas.addEventListener("mousemove", (e) => {
-      if (config.autopilot) return; // Ignore input if autopilot is on
+    // Touch & Mouse Movement
+    function handlePointer(clientX) {
+      if (config.autopilot) return;
       const rect = canvas.getBoundingClientRect();
-      const relativeX = (e.clientX - rect.left) * (canvas.width / rect.width);
-      if (relativeX > 0 && relativeX < canvas.width) {
-        paddle.x = relativeX - paddle.width / 2;
+      const relativeX = (clientX - rect.left) * (canvas.width / rect.width);
+      paddle.x = Math.max(0, Math.min(canvas.width - paddle.width, relativeX - paddle.width / 2));
+    }
+
+    canvas.addEventListener("mousemove", (e) => handlePointer(e.clientX));
+    canvas.addEventListener("touchmove", (e) => {
+      if (e.touches && e.touches[0]) {
+        handlePointer(e.touches[0].clientX);
       }
-    });
+    }, { passive: true });
 
     canvas.addEventListener("click", () => {
       if (gameOver || gameWon) {
@@ -277,7 +435,6 @@
     function launchBall() {
       ball.active = true;
       ball.speed = config.ballSpeed;
-      // Slanted upward launch
       ball.dx = (Math.random() * 2 - 1) * ball.speed * 0.6;
       ball.dy = -ball.speed;
       isPaused = false;
@@ -286,7 +443,7 @@
     function resetBallPaddle() {
       paddle.x = canvas.width / 2 - paddle.width / 2;
       ball.x = canvas.width / 2;
-      ball.y = paddle.y - 12;
+      ball.y = paddle.y - ball.radius - 2;
       ball.dx = 0;
       ball.dy = 0;
       ball.active = false;
@@ -303,21 +460,21 @@
       resetBallPaddle();
     }
 
-    // Apply config changes from MCP Server
+    // Apply Live Settings from Gemini Enterprise MCP Tool Calls
     function applyConfiguration(newConfig) {
       if (!newConfig) return;
-      console.log("Applying config updates:", newConfig);
+      console.log("[MCP Bridge] Applying live configuration updates:", newConfig);
 
-      if (newConfig.paddleSize !== undefined) {
-        config.paddleSize = Number(newConfig.paddleSize);
-        const diff = config.paddleSize - paddle.width;
-        paddle.width = config.paddleSize;
-        paddle.x -= diff / 2; // Center adjustments
+      if (newConfig.paddleSize !== undefined || newConfig.paddleWidth !== undefined) {
+        const newSize = Number(newConfig.paddleSize || newConfig.paddleWidth);
+        const diff = newSize - paddle.width;
+        paddle.width = newSize;
+        config.paddleSize = newSize;
+        paddle.x -= diff / 2;
       }
       if (newConfig.ballSpeed !== undefined) {
         config.ballSpeed = Number(newConfig.ballSpeed);
         if (ball.active) {
-          // Live scale velocity
           const currentSpeed = Math.sqrt(ball.dx * ball.dx + ball.dy * ball.dy);
           if (currentSpeed > 0) {
             ball.dx = (ball.dx / currentSpeed) * config.ballSpeed;
@@ -326,372 +483,278 @@
         }
       }
       if (newConfig.lives !== undefined) {
-        const livesDiff = Number(newConfig.lives) - config.lives;
+        const diff = Number(newConfig.lives) - config.lives;
         config.lives = Number(newConfig.lives);
-        currentLives = Math.max(1, currentLives + livesDiff);
+        currentLives = Math.max(1, currentLives + diff);
       }
       if (newConfig.autopilot !== undefined) {
         config.autopilot = Boolean(newConfig.autopilot);
+        if (aiStatusBadge) {
+          aiStatusBadge.style.display = config.autopilot ? 'inline-block' : 'none';
+        }
       }
       if (newConfig.godMode !== undefined) {
         config.godMode = Boolean(newConfig.godMode);
       }
 
-      // Re-bound paddle inside borders
       paddle.x = Math.max(0, Math.min(canvas.width - paddle.width, paddle.x));
     }
 
-    // MCP Listeners
-    if (mcpApp) {
-      // Listen for tool results (this triggers when Gemini updates configurations)
-      mcpApp.ontoolresult = (event) => {
-        try {
-          const resultText = event.result?.content?.[0]?.text;
-          if (resultText) {
-            // Check if tool return payload is settings JSON
-            if (resultText.includes("{") && resultText.includes("}")) {
-              const startIdx = resultText.indexOf("{");
-              const endIdx = resultText.lastIndexOf("}") + 1;
-              const jsonStr = resultText.substring(startIdx, endIdx);
-              const data = JSON.parse(jsonStr);
-              if (data && data.settings) {
-                applyConfiguration(data.settings);
-              }
-              if (data && data.cheatApplied) {
-                handleCheat(data.cheatApplied);
-              }
-            }
-          }
-        } catch (e) {
-          console.error("Error parsing ontoolresult update:", e);
-        }
-      };
-
-      // Query server for starting configurations on load
-      try {
-        const initData = await mcpApp.callServerTool({
-          name: "get_game_config",
-          arguments: {}
-        });
-        const configText = initData?.content?.[0]?.text;
-        if (configText) {
-          const data = JSON.parse(configText);
-          if (data && data.settings) {
-            applyConfiguration(data.settings);
-            currentLives = config.lives; // Align lives on start
-          }
-        }
-      } catch (e) {
-        console.warn("Failed to get starting configurations from server.", e);
-      }
-    }
-
     function handleCheat(cheat) {
-      if (cheat === "god_mode") {
+      console.log("[MCP Bridge] Executing cheat override:", cheat);
+      if (cheat === "god_mode" || cheat === "godMode") {
         config.godMode = true;
-      } else if (cheat === "extra_ball") {
-        // Simple cheat: add life
+        spawnExplosion(paddle.x + paddle.width / 2, paddle.y, "#00ffff", 25);
+      } else if (cheat === "extra_ball" || cheat === "extraBall") {
         currentLives += 1;
-        createExplosion(paddle.x + paddle.width/2, paddle.y, "#ffffff");
-      } else if (cheat === "slow_ball") {
-        applyConfiguration({ ballSpeed: 3 });
-      } else if (cheat === "laser_paddle") {
-        applyConfiguration({ paddleSize: 220 });
-      } else if (cheat === "win_level") {
+        spawnExplosion(canvas.width / 2, 45, "#ffffff", 20);
+      } else if (cheat === "slow_ball" || cheat === "slowBall") {
+        applyConfiguration({ ballSpeed: 3.5 });
+      } else if (cheat === "laser_paddle" || cheat === "laserPaddle") {
+        applyConfiguration({ paddleSize: 240 });
+        spawnExplosion(paddle.x + paddle.width / 2, paddle.y, "#ff00ff", 30);
+      } else if (cheat === "win_level" || cheat === "levelBypass") {
         winLevel();
       }
     }
 
-    // Reporting milestones/state to Gemini
-    let lastSentScore = 0;
-    async function reportGameEvent(type, messageText) {
-      if (!mcpApp) return;
-      try {
-        console.log(`Reporting game event to Gemini: ${type} - ${messageText}`);
-        await mcpApp.updateModelContext({
-          content: [{
-            type: "text",
-            text: `[GAME EVENT: ${type}] ${messageText} (Current Score: ${score}, Level: ${level}, Paddle Size: ${paddle.width}px, Ball Speed: ${config.ballSpeed}, Autopilot: ${config.autopilot ? 'ON' : 'OFF'})`
-          }]
-        });
-      } catch (e) {
-        console.warn("Error sending model context update:", e);
-      }
-    }
+    // Connect ontoolresult to live updates
+    mcp.ontoolresult = (data) => {
+      if (data.settings) applyConfiguration(data.settings);
+      if (data.cheatApplied) handleCheat(data.cheatApplied);
+    };
 
     function winLevel() {
       gameWon = true;
       isPaused = true;
       ball.active = false;
-      createExplosion(canvas.width/2, canvas.height/2, '#00ff66');
-      reportGameEvent("LEVEL_WON", `The user completed Level ${level} with a score of ${score}! Recommend they try Level ${level+1} with a faster ball speed!`);
+      spawnExplosion(canvas.width / 2, canvas.height / 2, '#00ff66', 40);
+      mcp.updateModelContext(
+        `[BREAKOUT GAME EVENT: LEVEL_CLEARED] The player completed Level ${level} with a score of ${score}! Suggest they attempt Level ${level + 1} with higher ball speed!`
+      );
     }
 
     function triggerGameOver() {
       gameOver = true;
       isPaused = true;
       ball.active = false;
-      createExplosion(ball.x, ball.y, '#ff003c');
-      
+      spawnExplosion(ball.x, ball.y, '#ff003c', 35);
       if (score > highScore) {
         highScore = score;
-        localStorage.setItem('breakout_high_score', score);
+        try { localStorage.setItem('breakout_high_score', score); } catch(e) {}
       }
-      reportGameEvent("GAME_OVER", `The player scored ${score} points and met their doom on Level ${level}. Rate their skill level (out of 10) and tease/praise them appropriately!`);
+      mcp.updateModelContext(
+        `[BREAKOUT GAME EVENT: GAME_OVER] The player reached a final score of ${score} on Level ${level}. Congratulate or playfully tease them and invite them to play another round!`
+      );
     }
 
-    // Game logic physics & render
-    function movePaddle() {
-      if (config.autopilot && ball.active) {
-        // Human-like smooth autopilot tracking ball
-        const paddleCenter = paddle.x + paddle.width / 2;
-        const ballX = ball.x;
-        const diff = ballX - paddleCenter;
-        // Limit max bot speed to look smoother
-        const botMaxSpeed = paddle.speed * 1.1; 
-        if (Math.abs(diff) > 5) {
-          paddle.x += Math.sign(diff) * Math.min(Math.abs(diff), botMaxSpeed);
-        }
-      } else {
-        // Manual movement
-        if (rightPressed && paddle.x < canvas.width - paddle.width) {
-          paddle.x += paddle.speed;
-        } else if (leftPressed && paddle.x > 0) {
-          paddle.x -= paddle.speed;
-        }
-      }
-    }
-
-    function collisionDetection() {
-      let activeBricksCount = 0;
-      for (let c = 0; c < brickColumnCount; c++) {
-        for (let r = 0; r < brickRowCount; r++) {
-          let b = bricks[c][r];
-          if (b.status == 1) {
-            activeBricksCount++;
-            // Check box-circle collision
-            // Ball edges
-            const ballLeft = ball.x - ball.radius;
-            const ballRight = ball.x + ball.radius;
-            const ballTop = ball.y - ball.radius;
-            const ballBottom = ball.y + ball.radius;
-
-            const brickLeft = b.x;
-            const brickRight = b.x + brickWidth;
-            const brickTop = b.y;
-            const brickBottom = b.y + brickHeight;
-
-            if (ballRight >= brickLeft && ballLeft <= brickRight && 
-                ballBottom >= brickTop && ballTop <= brickBottom) {
-              
-              // Bounce mechanics: determine vertical vs horizontal impact
-              const fromLeft = Math.abs(ballRight - brickLeft);
-              const fromRight = Math.abs(ballLeft - brickRight);
-              const fromTop = Math.abs(ballBottom - brickTop);
-              const fromBottom = Math.abs(ballTop - brickBottom);
-
-              const minDiff = Math.min(fromLeft, fromRight, fromTop, fromBottom);
-
-              if (minDiff === fromTop || minDiff === fromBottom) {
-                ball.dy = -ball.dy;
-              } else {
-                ball.dx = -ball.dx;
-              }
-
-              b.status = 0;
-              score += b.points;
-              
-              // Retro sound or particle explosion
-              createExplosion(b.x + brickWidth / 2, b.y + brickHeight / 2, b.color);
-
-              // Periodic milestone announcements (every 100 points)
-              if (score - lastSentScore >= 100) {
-                lastSentScore = Math.floor(score / 100) * 100;
-                reportGameEvent("SCORE_MILESTONE", `The user reached a score of ${score}! Cheer them on in the chat!`);
-              }
-
-              break; // Handle one brick hit per frame
-            }
-          }
-        }
-      }
-
-      // Check level clear
-      if (activeBricksCount === 0 && !gameWon) {
-        winLevel();
-      }
-    }
-
-    function drawBall() {
-      ctx.fillStyle = '#ffffff';
-      // Classic square pixel ball
-      ctx.fillRect(ball.x - ball.radius, ball.y - ball.radius, ball.radius * 2, ball.radius * 2);
-    }
-
-    function drawPaddle() {
-      ctx.fillStyle = '#ffffff';
-      // Sharp retro arcade white paddle
-      ctx.fillRect(paddle.x, paddle.y, paddle.width, paddle.height);
-    }
-
-    function drawBricks() {
-      for (let c = 0; c < brickColumnCount; c++) {
-        for (let r = 0; r < brickRowCount; r++) {
-          if (bricks[c][r].status == 1) {
-            let brickX = (c * (brickWidth + brickPadding)) + brickOffsetLeft;
-            let brickY = (r * (brickHeight + brickPadding)) + brickOffsetTop;
-            bricks[c][r].x = brickX;
-            bricks[c][r].y = brickY;
-            ctx.fillStyle = bricks[c][r].color;
-            ctx.fillRect(brickX, brickY, brickWidth, brickHeight);
-          }
-        }
-      }
-    }
-
-    function drawScoreboard() {
-      ctx.font = "24px 'Press Start 2P', 'Courier New', monospace";
-      ctx.fillStyle = "#ffffff";
-      
-      // Retro alignment
-      ctx.textAlign = "left";
-      ctx.fillText(`SCORE: ${score.toString().padStart(4, '0')}`, 24, 45);
-      
-      ctx.textAlign = "center";
-      ctx.fillText(`LIVES: ${currentLives}`, canvas.width / 2, 45);
-
-      ctx.textAlign = "right";
-      ctx.fillText(`HI: ${highScore.toString().padStart(4, '0')}`, canvas.width - 24, 45);
-
-      // Horizontal classic separator line
-      ctx.fillStyle = "#333333";
-      ctx.fillRect(24, 65, canvas.width - 48, 3);
-    }
-
-    function drawOverlayScreen(title, subtitle) {
-      ctx.save();
-      ctx.fillStyle = "rgba(0, 0, 0, 0.75)";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      ctx.font = "32px 'Press Start 2P', 'Courier New', monospace";
-      ctx.fillStyle = "#ff003c";
-      ctx.textAlign = "center";
-      ctx.fillText(title, canvas.width / 2, canvas.height / 2 - 20);
-
-      ctx.font = "16px 'Press Start 2P', 'Courier New', monospace";
-      ctx.fillStyle = "#ffffff";
-      ctx.fillText(subtitle, canvas.width / 2, canvas.height / 2 + 30);
-      ctx.restore();
-    }
-
-    function update() {
+    // Game Physics & Collision Updates (Delta-Time Scaled)
+    function updatePhysics(dt) {
       if (isPaused || gameOver || gameWon) return;
 
-      movePaddle();
+      // Autopilot / Manual Paddle Physics
+      if (config.autopilot && ball.active) {
+        const paddleCenter = paddle.x + paddle.width / 2;
+        const diff = ball.x - paddleCenter;
+        const maxStep = paddle.speed * 1.2 * dt;
+        if (Math.abs(diff) > 4) {
+          paddle.x += Math.sign(diff) * Math.min(Math.abs(diff), maxStep);
+        }
+      } else {
+        if (rightPressed && paddle.x < canvas.width - paddle.width) {
+          paddle.x += paddle.speed * dt;
+        } else if (leftPressed && paddle.x > 0) {
+          paddle.x -= paddle.speed * dt;
+        }
+      }
 
       if (ball.active) {
-        ball.x += ball.dx;
-        ball.y += ball.dy;
+        ball.x += ball.dx * dt;
+        ball.y += ball.dy * dt;
 
-        // Bouncing on walls
+        // Wall collisions
         if (ball.x - ball.radius <= 0) {
-          ball.x = ball.radius; // Clip inside boundary
+          ball.x = ball.radius;
           ball.dx = -ball.dx;
         } else if (ball.x + ball.radius >= canvas.width) {
           ball.x = canvas.width - ball.radius;
           ball.dx = -ball.dx;
         }
 
-        if (ball.y - ball.radius <= 75) { // ceiling margin
-          ball.y = 75 + ball.radius;
+        if (ball.y - ball.radius <= 70) {
+          ball.y = 70 + ball.radius;
           ball.dy = -ball.dy;
         }
 
-        // Bouncing on paddle
-        const paddleLeft = paddle.x;
-        const paddleRight = paddle.x + paddle.width;
+        // Paddle Collision
         const paddleTop = paddle.y;
-        
         if (ball.y + ball.radius >= paddleTop && ball.y - ball.radius <= paddleTop + paddle.height) {
-          if (ball.x >= paddleLeft && ball.x <= paddleRight) {
-            // Calculate hit sector relative to paddle center to adjust reflection angle
-            const paddleCenter = paddleLeft + paddle.width / 2;
-            const hitOffset = ball.x - paddleCenter;
-            const normalizedOffset = hitOffset / (paddle.width / 2); // -1 to 1
-
-            // Dynamic deflection angle
-            ball.dx = normalizedOffset * ball.speed * 0.8;
-            ball.dy = -Math.sqrt(ball.speed * ball.speed - ball.dx * ball.dx);
-            
-            // Pop ball up to prevent trapping
+          if (ball.x >= paddle.x && ball.x <= paddle.x + paddle.width) {
+            const hitOffset = ball.x - (paddle.x + paddle.width / 2);
+            const normalized = hitOffset / (paddle.width / 2);
+            ball.dx = normalized * ball.speed * 0.85;
+            ball.dy = -Math.sqrt(Math.max(4, ball.speed * ball.speed - ball.dx * ball.dx));
             ball.y = paddleTop - ball.radius;
           }
         }
 
-        // Falling below paddle (lose life)
+        // Bottom Screen / Fall Out
         if (ball.y + ball.radius > canvas.height) {
           if (config.godMode) {
-            // God Mode bounces ball automatically at screen bottom
             ball.y = canvas.height - ball.radius;
             ball.dy = -ball.dy;
+            spawnExplosion(ball.x, canvas.height - 10, "#00ffff", 10);
           } else {
             currentLives--;
             if (currentLives <= 0) {
               triggerGameOver();
             } else {
-              reportGameEvent("LIFE_LOST", `The ball slipped by! Lives remaining: ${currentLives}. Encouraging words requested!`);
+              mcp.updateModelContext(`[BREAKOUT GAME EVENT: LIFE_LOST] Ball dropped! Remaining lives: ${currentLives}.`);
               resetBallPaddle();
             }
           }
         }
 
-        collisionDetection();
+        // Brick Collisions
+        let activeBricks = 0;
+        for (let c = 0; c < brickColumnCount; c++) {
+          for (let r = 0; r < brickRowCount; r++) {
+            const b = bricks[c][r];
+            if (b.status === 1) {
+              activeBricks++;
+              if (ball.x + ball.radius >= b.x && ball.x - ball.radius <= b.x + brickWidth &&
+                  ball.y + ball.radius >= b.y && ball.y - ball.radius <= b.y + brickHeight) {
+                
+                const fromLeft = Math.abs((ball.x + ball.radius) - b.x);
+                const fromRight = Math.abs((ball.x - ball.radius) - (b.x + brickWidth));
+                const fromTop = Math.abs((ball.y + ball.radius) - b.y);
+                const fromBottom = Math.abs((ball.y - ball.radius) - (b.y + brickHeight));
+                const minDiff = Math.min(fromLeft, fromRight, fromTop, fromBottom);
+
+                if (minDiff === fromTop || minDiff === fromBottom) {
+                  ball.dy = -ball.dy;
+                } else {
+                  ball.dx = -ball.dx;
+                }
+
+                b.status = 0;
+                score += b.points;
+                spawnExplosion(b.x + brickWidth / 2, b.y + brickHeight / 2, b.color, 14);
+
+                if (score - lastSentScore >= 100) {
+                  lastSentScore = Math.floor(score / 100) * 100;
+                  mcp.updateModelContext(`[BREAKOUT GAME EVENT: SCORE_UPDATE] Player reached ${score} points!`);
+                }
+                break;
+              }
+            }
+          }
+        }
+
+        if (activeBricks === 0 && !gameWon) {
+          winLevel();
+        }
       } else {
-        // Snap ball to paddle if not launched
         ball.x = paddle.x + paddle.width / 2;
         ball.y = paddle.y - ball.radius - 2;
-
-        // Auto-launch after 2 seconds if autopilot is on
         if (config.autopilot && !isPaused) {
           launchBall();
         }
       }
     }
 
+    // High-Performance Batched Canvas Rendering
     function render() {
-      // Clear screen
+      // Clear canvas
       ctx.fillStyle = '#000000';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      drawBricks();
-      drawPaddle();
-      drawBall();
-      drawParticles();
-      drawScoreboard();
+      // Draw Bricks
+      for (let c = 0; c < brickColumnCount; c++) {
+        for (let r = 0; r < brickRowCount; r++) {
+          const b = bricks[c][r];
+          if (b.status === 1) {
+            ctx.fillStyle = b.color;
+            ctx.fillRect(b.x, b.y, brickWidth, brickHeight);
+          }
+        }
+      }
 
-      // UI Screens
+      // Draw Paddle
+      ctx.fillStyle = config.godMode ? '#00ffff' : '#ffffff';
+      ctx.fillRect(paddle.x, paddle.y, paddle.width, paddle.height);
+
+      // Draw Ball
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(ball.x - ball.radius, ball.y - ball.radius, ball.radius * 2, ball.radius * 2);
+
+      // Draw Particles (Batched)
+      drawParticles();
+
+      // Draw Retro Scoreboard
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "20px 'Courier New', Courier, monospace";
+      ctx.textAlign = "left";
+      ctx.fillText(`SCORE: ${score.toString().padStart(4, '0')}`, 24, 42);
+
+      ctx.textAlign = "center";
+      ctx.fillText(`LIVES: ${currentLives}`, canvas.width / 2, 42);
+
+      ctx.textAlign = "right";
+      ctx.fillText(`HI: ${highScore.toString().padStart(4, '0')}`, canvas.width - 24, 42);
+
+      // Horizontal separator bar
+      ctx.fillStyle = "#333333";
+      ctx.fillRect(24, 60, canvas.width - 48, 2);
+
+      // Overlays
       if (gameOver) {
-        drawOverlayScreen("GAME OVER", "CLICK TO PLAY AGAIN");
+        drawOverlay("GAME OVER", "CLICK OR PRESS SPACE TO RETRY");
       } else if (gameWon) {
-        drawOverlayScreen("LEVEL CLEARED!", "CLICK TO RETRY / NEXT LEVEL");
+        drawOverlay("LEVEL CLEARED!", "CLICK OR PRESS SPACE FOR NEXT LEVEL");
       } else if (isPaused) {
         if (!ball.active) {
-          drawOverlayScreen("READY!", "CLICK SCREEN OR PRESS SPACE TO LAUNCH");
+          drawOverlay("READY!", "PRESS SPACE OR CLICK CANVAS TO LAUNCH");
         } else {
-          drawOverlayScreen("PAUSED", "PRESS SPACE TO RESUME");
+          drawOverlay("PAUSED", "PRESS SPACE TO RESUME");
         }
       }
     }
 
-    // Unified game loop
-    function gameLoop() {
-      update();
-      updateParticles();
+    function drawOverlay(title, subtitle) {
+      ctx.fillStyle = "rgba(0, 0, 0, 0.78)";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.fillStyle = "#ff0040";
+      ctx.font = "bold 34px 'Courier New', Courier, monospace";
+      ctx.textAlign = "center";
+      ctx.fillText(title, canvas.width / 2, canvas.height / 2 - 15);
+
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "16px 'Courier New', Courier, monospace";
+      ctx.fillText(subtitle, canvas.width / 2, canvas.height / 2 + 28);
+    }
+
+    // Unified Fixed-Timestep Delta-Time Game Loop
+    let lastFrameTime = performance.now();
+    function gameLoop(now) {
+      const deltaMs = now - lastFrameTime;
+      lastFrameTime = now;
+      
+      // Normalized delta scale (1.0 = 60 FPS, max cap 2.0 to prevent jump through walls on tab backgrounding)
+      const dt = Math.min(Math.max(deltaMs / 16.667, 0.1), 2.0);
+
+      updatePhysics(dt);
+      updateParticles(dt);
       render();
+
       requestAnimationFrame(gameLoop);
     }
 
-    gameLoop();
+    // Initialize Game Immediately
+    initBricks();
+    resetBallPaddle();
+    requestAnimationFrame(gameLoop);
   </script>
 </body>
 </html>
