@@ -74,6 +74,173 @@
       will-change: transform;
     }
 
+    /* In-App Retro Settings Drawer / Modal */
+    #settings-btn {
+      position: absolute;
+      top: 10px;
+      right: 12px;
+      z-index: 20;
+      background: rgba(0, 0, 0, 0.7);
+      border: 1px solid #00ff66;
+      color: #00ff66;
+      padding: 4px 8px;
+      font-size: 11px;
+      font-family: inherit;
+      cursor: pointer;
+      border-radius: 3px;
+      letter-spacing: 1px;
+      font-weight: bold;
+      transition: all 0.2s ease;
+    }
+
+    #settings-btn:hover {
+      background: #00ff66;
+      color: #000;
+      box-shadow: 0 0 10px #00ff66;
+    }
+
+    #settings-modal {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.88);
+      z-index: 30;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      backdrop-filter: blur(3px);
+    }
+
+    .settings-panel {
+      background: #0a0a0a;
+      border: 2px solid #00ff66;
+      box-shadow: 0 0 20px rgba(0, 255, 102, 0.3);
+      padding: 18px 24px;
+      border-radius: 6px;
+      width: 90%;
+      max-width: 440px;
+    }
+
+    .settings-title {
+      color: #00ff66;
+      font-size: 18px;
+      font-weight: bold;
+      text-align: center;
+      margin-bottom: 14px;
+      letter-spacing: 2px;
+      border-bottom: 1px solid #222;
+      padding-bottom: 8px;
+    }
+
+    .setting-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+      font-size: 12px;
+    }
+
+    .setting-label {
+      color: #ddd;
+      font-weight: bold;
+      letter-spacing: 1px;
+    }
+
+    .setting-val {
+      color: #00ccff;
+      font-weight: bold;
+      margin-left: 8px;
+      min-width: 45px;
+      text-align: right;
+    }
+
+    .slider {
+      flex: 1;
+      margin: 0 10px;
+      accent-color: #00ff66;
+      cursor: pointer;
+    }
+
+    .btn-toggle {
+      background: #1a1a1a;
+      border: 1px solid #555;
+      color: #888;
+      padding: 4px 10px;
+      border-radius: 3px;
+      font-family: inherit;
+      font-size: 11px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    .btn-toggle.active {
+      background: #00ff66;
+      color: #000;
+      border-color: #00ff66;
+      box-shadow: 0 0 8px #00ff66;
+    }
+
+    .cheats-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 10px;
+      margin-bottom: 14px;
+    }
+
+    .cheat-btn {
+      background: #151515;
+      border: 1px solid #ff007f;
+      color: #ff007f;
+      padding: 6px;
+      font-family: inherit;
+      font-size: 11px;
+      font-weight: bold;
+      border-radius: 3px;
+      cursor: pointer;
+      text-align: center;
+      transition: all 0.2s;
+    }
+
+    .cheat-btn:hover {
+      background: #ff007f;
+      color: #fff;
+      box-shadow: 0 0 10px #ff007f;
+    }
+
+    .action-row {
+      display: flex;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .btn-action {
+      flex: 1;
+      padding: 8px;
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: bold;
+      border-radius: 3px;
+      cursor: pointer;
+      text-align: center;
+    }
+
+    .btn-close {
+      background: #00ff66;
+      color: #000;
+      border: 1px solid #00ff66;
+    }
+
+    .btn-restart {
+      background: #222;
+      color: #ff0040;
+      border: 1px solid #ff0040;
+    }
+
     /* Controls tip & status bar */
     #controls-tip {
       margin-top: 6px;
@@ -102,19 +269,60 @@
 
   <div id="arcade-cabinet">
     <div id="scanlines"></div>
+    <button id="settings-btn">⚙️ SETTINGS</button>
     <canvas id="gameCanvas" width="800" height="600"></canvas>
+
+    <!-- In-App Settings Drawer -->
+    <div id="settings-modal">
+      <div class="settings-panel">
+        <div class="settings-title">🕹️ ARCADE SETTINGS</div>
+        
+        <div class="setting-row">
+          <span class="setting-label">PADDLE:</span>
+          <input type="range" id="paddle-slider" class="slider" min="80" max="250" value="120">
+          <span id="paddle-val" class="setting-val">120px</span>
+        </div>
+
+        <div class="setting-row">
+          <span class="setting-label">SPEED:</span>
+          <input type="range" id="speed-slider" class="slider" min="3" max="9" step="0.5" value="5.5">
+          <span id="speed-val" class="setting-val">5.5</span>
+        </div>
+
+        <div class="setting-row">
+          <span class="setting-label">AI AUTOPILOT:</span>
+          <button id="toggle-autopilot" class="btn-toggle">OFF</button>
+        </div>
+
+        <div class="setting-row">
+          <span class="setting-label">GOD MODE (FLOOR BOUNCE):</span>
+          <button id="toggle-godmode" class="btn-toggle">OFF</button>
+        </div>
+
+        <div style="font-size: 10px; color: #888; margin-top: 6px; letter-spacing: 1px; text-transform: uppercase;">Instant Cheats:</div>
+        <div class="cheats-grid">
+          <button class="cheat-btn" id="cheat-laser">💥 Laser Paddle</button>
+          <button class="cheat-btn" id="cheat-life">💖 +1 Extra Life</button>
+          <button class="cheat-btn" id="cheat-slow">🐢 Slow Ball</button>
+          <button class="cheat-btn" id="cheat-skip">⏭️ Skip Level</button>
+        </div>
+
+        <div class="action-row">
+          <button id="btn-resume" class="btn-action btn-close">▶️ RESUME</button>
+          <button id="btn-newgame" class="btn-action btn-restart">🔄 NEW GAME</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <div id="controls-tip">
-    ◄ LEFT / RIGHT ► Arrow Keys • SPACE to Launch/Pause • Tap/Drag on Mobile
+    ◄ LEFT / RIGHT ► Keys • SPACE to Launch/Pause • Press [ESC] for Settings
     <span id="ai-status" class="badge" style="display:none;">AI AUTOPILOT ACTIVE</span>
   </div>
 
   <script>
     /**
-     * Complete, Spec-Compliant MCP Apps Protocol Bridge
-     * Implements full handshake: ui/initialize -> host response -> ui/notifications/initialized
-     * Guarantees dismissal of host loading spinner in Gemini Enterprise.
+     * Complete, Spec-Compliant MCP Apps Protocol Bridge with Session Continuity
      */
     class MCPAppsBridge {
       constructor() {
@@ -124,15 +332,11 @@
         this.hostContext = {};
         this.ontoolresult = null;
 
-        // Listen for messages from host window
         window.addEventListener("message", (event) => {
           this.handleIncomingMessage(event);
         });
 
-        // 1. Immediately initiate handshake with Host
         this.sendInitialize();
-
-        // 2. Proactively send initialized notification as eager fallback to dismiss spinner
         this.sendInitializedNotification();
         setTimeout(() => this.sendInitializedNotification(), 50);
         setTimeout(() => this.sendInitializedNotification(), 250);
@@ -147,19 +351,13 @@
             method: "ui/initialize",
             params: {
               protocolVersion: "2024-11-05",
-              appInfo: {
-                name: "retro-breakout",
-                version: "1.1.0"
-              },
-              appCapabilities: {
-                availableDisplayModes: ["inline", "fullscreen"]
-              }
+              appInfo: { name: "retro-breakout", version: "1.2.0" },
+              appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] }
             }
           }, "*");
           this.connected = true;
-          console.log("[MCP Bridge] Sent ui/initialize request to host (id: " + this.initRequestId + ")");
         } catch (err) {
-          console.warn("[MCP Bridge] Running in isolated standalone mode.", err);
+          console.warn("[MCP Bridge] Running in isolated mode.", err);
         }
       }
 
@@ -172,7 +370,6 @@
             params: {}
           }, "*");
           this.initialized = true;
-          console.log("[MCP Bridge] Sent ui/notifications/initialized to host.");
         } catch (err) {
           console.warn("[MCP Bridge] Failed to send initialized notification:", err);
         }
@@ -182,38 +379,29 @@
         const data = event.data;
         if (!data || typeof data !== "object") return;
 
-        console.log("[MCP Bridge] Received message from host:", data);
-
-        // Host response to ui/initialize
         if (data.id === this.initRequestId && data.result) {
           this.hostContext = data.result.hostContext || {};
           this.sendInitializedNotification();
         }
 
-        // Host tool result notification
         if (data.method === "ui/notifications/tool-result" || data.method === "tools/call_result") {
           this.sendInitializedNotification();
           const result = data.params?.result || data.params || data.result;
           this.processToolPayload(result);
         }
 
-        // Direct tool invocation results (JSON-RPC responses)
         if (data.result && (data.result.content || data.result._meta)) {
           this.sendInitializedNotification();
           this.processToolPayload(data.result);
         }
 
-        // Host context changes
         if (data.method === "ui/notifications/host-context-changed") {
           this.hostContext = data.params || {};
         }
 
-        // Ping / Heartbeat from Host
-        if (data.method === "ping") {
+        if (data.method === "ping" && event.source && data.id) {
           this.sendInitializedNotification();
-          if (event.source && data.id) {
-            event.source.postMessage({ jsonrpc: "2.0", id: data.id, result: {} }, "*");
-          }
+          event.source.postMessage({ jsonrpc: "2.0", id: data.id, result: {} }, "*");
         }
       }
 
@@ -223,9 +411,7 @@
           let rawText = "";
           if (Array.isArray(payload.content)) {
             for (const item of payload.content) {
-              if (item.type === "text" && item.text) {
-                rawText += item.text;
-              }
+              if (item.type === "text" && item.text) rawText += item.text;
             }
           } else if (typeof payload.text === "string") {
             rawText = payload.text;
@@ -237,9 +423,7 @@
             const startIdx = rawText.indexOf("{");
             const endIdx = rawText.lastIndexOf("}") + 1;
             const parsed = JSON.parse(rawText.substring(startIdx, endIdx));
-            if (this.ontoolresult) {
-              this.ontoolresult(parsed);
-            }
+            if (this.ontoolresult) this.ontoolresult(parsed);
           }
         } catch (e) {
           console.warn("[MCP Bridge] Error parsing tool result payload:", e);
@@ -253,12 +437,7 @@
             jsonrpc: "2.0",
             method: "ui/notifications/context-update",
             params: {
-              content: [
-                {
-                  type: "text",
-                  text: messageText
-                }
-              ],
+              content: [{ type: "text", text: messageText }],
               _meta: metadata
             }
           }, "*");
@@ -268,13 +447,24 @@
       }
     }
 
-    // Initialize MCP Bridge
     const mcp = new MCPAppsBridge();
 
-    // Setup Canvas and Rendering Context
+    // Canvas Context
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d', { alpha: false });
     const aiStatusBadge = document.getElementById('ai-status');
+
+    // UI Drawer Elements
+    const settingsBtn = document.getElementById('settings-btn');
+    const settingsModal = document.getElementById('settings-modal');
+    const paddleSlider = document.getElementById('paddle-slider');
+    const paddleVal = document.getElementById('paddle-val');
+    const speedSlider = document.getElementById('speed-slider');
+    const speedVal = document.getElementById('speed-val');
+    const toggleAutopilot = document.getElementById('toggle-autopilot');
+    const toggleGodmode = document.getElementById('toggle-godmode');
+    const btnResume = document.getElementById('btn-resume');
+    const btnNewGame = document.getElementById('btn-newgame');
 
     // Live Game Configuration
     const config = {
@@ -294,8 +484,10 @@
 
     let currentLives = config.lives;
     let isPaused = true;
+    let isSettingsOpen = false;
     let gameOver = false;
     let gameWon = false;
+    let isResumedSession = false;
     let level = 1;
     let lastSentScore = 0;
 
@@ -353,7 +545,85 @@
       }
     }
 
-    // High-Performance Particle Object Pool (Zero Garbage Collection Churn)
+    // --- Session Storage State Persistence & Continuity ---
+    const STORAGE_KEY = 'mcp_breakout_session_state';
+
+    function saveGameState() {
+      try {
+        const brickStatusMatrix = [];
+        for (let c = 0; c < brickColumnCount; c++) {
+          brickStatusMatrix[c] = [];
+          for (let r = 0; r < brickRowCount; r++) {
+            brickStatusMatrix[c][r] = bricks[c] && bricks[c][r] ? bricks[c][r].status : 0;
+          }
+        }
+
+        const statePayload = {
+          score: score,
+          currentLives: currentLives,
+          level: level,
+          gameOver: gameOver,
+          gameWon: gameWon,
+          config: config,
+          brickMatrix: brickStatusMatrix,
+          timestamp: Date.now()
+        };
+
+        sessionStorage.setItem(STORAGE_KEY, JSON.stringify(statePayload));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(statePayload));
+      } catch (e) {}
+    }
+
+    function loadGameState() {
+      try {
+        const raw = sessionStorage.getItem(STORAGE_KEY) || localStorage.getItem(STORAGE_KEY);
+        if (!raw) return false;
+        const saved = JSON.parse(raw);
+        if (!saved) return false;
+
+        // If previous game was over or expired (> 3 hours), start fresh
+        if (saved.gameOver || (Date.now() - (saved.timestamp || 0) > 3 * 3600 * 1000)) {
+          return false;
+        }
+
+        // Restore active game progress
+        score = saved.score || 0;
+        currentLives = Math.max(1, saved.currentLives !== undefined ? saved.currentLives : 3);
+        level = saved.level || 1;
+        gameWon = Boolean(saved.gameWon);
+        gameOver = false;
+
+        if (saved.config) {
+          applyConfiguration(saved.config, false);
+        }
+
+        // Restore brick status matrix
+        if (saved.brickMatrix && Array.isArray(saved.brickMatrix)) {
+          initBricks();
+          for (let c = 0; c < brickColumnCount; c++) {
+            for (let r = 0; r < brickRowCount; r++) {
+              if (saved.brickMatrix[c] && saved.brickMatrix[c][r] !== undefined) {
+                bricks[c][r].status = saved.brickMatrix[c][r];
+              }
+            }
+          }
+        }
+
+        isResumedSession = score > 0 || level > 1;
+        return true;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    function clearGameState() {
+      try {
+        sessionStorage.removeItem(STORAGE_KEY);
+        localStorage.removeItem(STORAGE_KEY);
+      } catch (e) {}
+    }
+
+    // Particle Object Pool
     const MAX_PARTICLES = 250;
     const particlePool = [];
     for (let i = 0; i < MAX_PARTICLES; i++) {
@@ -397,9 +667,7 @@
           p.y += p.vy * dt;
           p.vy += 0.15 * dt;
           p.alpha -= p.decay * dt;
-          if (p.alpha <= 0) {
-            p.active = false;
-          }
+          if (p.alpha <= 0) p.active = false;
         }
       }
     }
@@ -421,6 +689,12 @@
     let leftPressed = false;
 
     window.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        toggleSettingsDrawer();
+        return;
+      }
+      if (isSettingsOpen) return;
+
       if (e.key === "Right" || e.key === "ArrowRight") {
         rightPressed = true;
       } else if (e.key === "Left" || e.key === "ArrowLeft") {
@@ -428,7 +702,7 @@
       } else if (e.key === " " || e.code === "Space") {
         e.preventDefault();
         if (gameOver || gameWon) {
-          resetGame();
+          resetGame(true);
         } else if (!ball.active) {
           launchBall();
         } else {
@@ -438,16 +712,12 @@
     });
 
     window.addEventListener("keyup", (e) => {
-      if (e.key === "Right" || e.key === "ArrowRight") {
-        rightPressed = false;
-      } else if (e.key === "Left" || e.key === "ArrowLeft") {
-        leftPressed = false;
-      }
+      if (e.key === "Right" || e.key === "ArrowRight") rightPressed = false;
+      if (e.key === "Left" || e.key === "ArrowLeft") leftPressed = false;
     });
 
-    // Touch & Mouse Movement
     function handlePointer(clientX) {
-      if (config.autopilot) return;
+      if (config.autopilot || isSettingsOpen) return;
       const rect = canvas.getBoundingClientRect();
       const relativeX = (clientX - rect.left) * (canvas.width / rect.width);
       paddle.x = Math.max(0, Math.min(canvas.width - paddle.width, relativeX - paddle.width / 2));
@@ -455,14 +725,13 @@
 
     canvas.addEventListener("mousemove", (e) => handlePointer(e.clientX));
     canvas.addEventListener("touchmove", (e) => {
-      if (e.touches && e.touches[0]) {
-        handlePointer(e.touches[0].clientX);
-      }
+      if (e.touches && e.touches[0]) handlePointer(e.touches[0].clientX);
     }, { passive: true });
 
     canvas.addEventListener("click", () => {
+      if (isSettingsOpen) return;
       if (gameOver || gameWon) {
-        resetGame();
+        resetGame(true);
       } else if (!ball.active) {
         launchBall();
       }
@@ -474,6 +743,7 @@
       ball.dx = (Math.random() * 2 - 1) * ball.speed * 0.6;
       ball.dy = -ball.speed;
       isPaused = false;
+      isResumedSession = false;
     }
 
     function resetBallPaddle() {
@@ -485,21 +755,25 @@
       ball.active = false;
     }
 
-    function resetGame() {
-      score = 0;
-      currentLives = config.lives;
-      level = 1;
+    function resetGame(fullReset = false) {
+      if (fullReset) {
+        score = 0;
+        level = 1;
+        currentLives = config.lives;
+        clearGameState();
+      }
       gameOver = false;
       gameWon = false;
       isPaused = true;
+      isResumedSession = false;
       initBricks();
       resetBallPaddle();
+      saveGameState();
     }
 
-    // Apply Live Settings from Gemini Enterprise MCP Tool Calls
-    function applyConfiguration(newConfig) {
+    // Apply Live Configuration Updates (from LLM or HUD)
+    function applyConfiguration(newConfig, shouldSave = true) {
       if (!newConfig) return;
-      console.log("[MCP Bridge] Applying live configuration updates:", newConfig);
 
       if (newConfig.paddleSize !== undefined || newConfig.paddleWidth !== undefined) {
         const newSize = Number(newConfig.paddleSize || newConfig.paddleWidth);
@@ -507,9 +781,13 @@
         paddle.width = newSize;
         config.paddleSize = newSize;
         paddle.x -= diff / 2;
+        if (paddleSlider) paddleSlider.value = newSize;
+        if (paddleVal) paddleVal.textContent = newSize + "px";
       }
       if (newConfig.ballSpeed !== undefined) {
         config.ballSpeed = Number(newConfig.ballSpeed);
+        if (speedSlider) speedSlider.value = config.ballSpeed;
+        if (speedVal) speedVal.textContent = config.ballSpeed;
         if (ball.active) {
           const currentSpeed = Math.sqrt(ball.dx * ball.dx + ball.dy * ball.dy);
           if (currentSpeed > 0) {
@@ -525,24 +803,31 @@
       }
       if (newConfig.autopilot !== undefined) {
         config.autopilot = Boolean(newConfig.autopilot);
-        if (aiStatusBadge) {
-          aiStatusBadge.style.display = config.autopilot ? 'inline-block' : 'none';
+        if (aiStatusBadge) aiStatusBadge.style.display = config.autopilot ? 'inline-block' : 'none';
+        if (toggleAutopilot) {
+          toggleAutopilot.textContent = config.autopilot ? "ON" : "OFF";
+          toggleAutopilot.classList.toggle("active", config.autopilot);
         }
       }
       if (newConfig.godMode !== undefined) {
         config.godMode = Boolean(newConfig.godMode);
+        if (toggleGodmode) {
+          toggleGodmode.textContent = config.godMode ? "ON" : "OFF";
+          toggleGodmode.classList.toggle("active", config.godMode);
+        }
       }
 
       paddle.x = Math.max(0, Math.min(canvas.width - paddle.width, paddle.x));
+      if (shouldSave) saveGameState();
     }
 
     function handleCheat(cheat) {
-      console.log("[MCP Bridge] Executing cheat override:", cheat);
       if (cheat === "god_mode" || cheat === "godMode") {
-        config.godMode = true;
+        applyConfiguration({ godMode: true });
         spawnExplosion(paddle.x + paddle.width / 2, paddle.y, "#00ffff", 25);
       } else if (cheat === "extra_ball" || cheat === "extraBall") {
         currentLives += 1;
+        saveGameState();
         spawnExplosion(canvas.width / 2, 45, "#ffffff", 20);
       } else if (cheat === "slow_ball" || cheat === "slowBall") {
         applyConfiguration({ ballSpeed: 3.5 });
@@ -554,7 +839,6 @@
       }
     }
 
-    // Connect ontoolresult to live updates
     mcp.ontoolresult = (data) => {
       if (data.settings) applyConfiguration(data.settings);
       if (data.cheatApplied) handleCheat(data.cheatApplied);
@@ -564,6 +848,7 @@
       gameWon = true;
       isPaused = true;
       ball.active = false;
+      saveGameState();
       spawnExplosion(canvas.width / 2, canvas.height / 2, '#00ff66', 40);
       mcp.updateModelContext(
         `[BREAKOUT GAME EVENT: LEVEL_CLEARED] The player completed Level ${level} with a score of ${score}! Suggest they attempt Level ${level + 1} with higher ball speed!`
@@ -574,21 +859,60 @@
       gameOver = true;
       isPaused = true;
       ball.active = false;
+      clearGameState(); // Clear in-progress session so next game starts fresh
       spawnExplosion(ball.x, ball.y, '#ff003c', 35);
       if (score > highScore) {
         highScore = score;
         try { localStorage.setItem('breakout_high_score', score); } catch(e) {}
       }
       mcp.updateModelContext(
-        `[BREAKOUT GAME EVENT: GAME_OVER] The player reached a final score of ${score} on Level ${level}. Congratulate or playfully tease them and invite them to play another round!`
+        `[BREAKOUT GAME EVENT: GAME_OVER] The player met their doom with a final score of ${score} on Level ${level}. Encourage them to play again!`
       );
     }
 
-    // Game Physics & Collision Updates (Delta-Time Scaled)
-    function updatePhysics(dt) {
-      if (isPaused || gameOver || gameWon) return;
+    // In-App Settings Drawer Interactions
+    function toggleSettingsDrawer() {
+      isSettingsOpen = !isSettingsOpen;
+      settingsModal.style.display = isSettingsOpen ? 'flex' : 'none';
+      if (isSettingsOpen) isPaused = true;
+    }
 
-      // Autopilot / Manual Paddle Physics
+    settingsBtn.addEventListener('click', toggleSettingsDrawer);
+    btnResume.addEventListener('click', toggleSettingsDrawer);
+    btnNewGame.addEventListener('click', () => {
+      toggleSettingsDrawer();
+      resetGame(true);
+    });
+
+    paddleSlider.addEventListener('input', (e) => {
+      const val = Number(e.target.value);
+      applyConfiguration({ paddleSize: val });
+    });
+
+    speedSlider.addEventListener('input', (e) => {
+      const val = Number(e.target.value);
+      applyConfiguration({ ballSpeed: val });
+    });
+
+    toggleAutopilot.addEventListener('click', () => {
+      applyConfiguration({ autopilot: !config.autopilot });
+      mcp.updateModelContext(`[USER ACTION] Autopilot set to ${config.autopilot ? 'ON' : 'OFF'}`);
+    });
+
+    toggleGodmode.addEventListener('click', () => {
+      applyConfiguration({ godMode: !config.godMode });
+      mcp.updateModelContext(`[USER ACTION] God Mode set to ${config.godMode ? 'ON' : 'OFF'}`);
+    });
+
+    document.getElementById('cheat-laser').addEventListener('click', () => handleCheat('laser_paddle'));
+    document.getElementById('cheat-life').addEventListener('click', () => handleCheat('extra_ball'));
+    document.getElementById('cheat-slow').addEventListener('click', () => handleCheat('slow_ball'));
+    document.getElementById('cheat-skip').addEventListener('click', () => handleCheat('win_level'));
+
+    // Physics & Collision Loop
+    function updatePhysics(dt) {
+      if (isPaused || isSettingsOpen || gameOver || gameWon) return;
+
       if (config.autopilot && ball.active) {
         const paddleCenter = paddle.x + paddle.width / 2;
         const diff = ball.x - paddleCenter;
@@ -608,7 +932,6 @@
         ball.x += ball.dx * dt;
         ball.y += ball.dy * dt;
 
-        // Wall collisions
         if (ball.x - ball.radius <= 0) {
           ball.x = ball.radius;
           ball.dx = -ball.dx;
@@ -622,7 +945,6 @@
           ball.dy = -ball.dy;
         }
 
-        // Paddle Collision
         const paddleTop = paddle.y;
         if (ball.y + ball.radius >= paddleTop && ball.y - ball.radius <= paddleTop + paddle.height) {
           if (ball.x >= paddle.x && ball.x <= paddle.x + paddle.width) {
@@ -634,7 +956,6 @@
           }
         }
 
-        // Bottom Screen / Fall Out
         if (ball.y + ball.radius > canvas.height) {
           if (config.godMode) {
             ball.y = canvas.height - ball.radius;
@@ -642,6 +963,7 @@
             spawnExplosion(ball.x, canvas.height - 10, "#00ffff", 10);
           } else {
             currentLives--;
+            saveGameState();
             if (currentLives <= 0) {
               triggerGameOver();
             } else {
@@ -651,7 +973,6 @@
           }
         }
 
-        // Brick Collisions
         let activeBricks = 0;
         for (let c = 0; c < brickColumnCount; c++) {
           for (let r = 0; r < brickRowCount; r++) {
@@ -675,6 +996,7 @@
 
                 b.status = 0;
                 score += b.points;
+                saveGameState();
                 spawnExplosion(b.x + brickWidth / 2, b.y + brickHeight / 2, b.color, 14);
 
                 if (score - lastSentScore >= 100) {
@@ -693,19 +1015,17 @@
       } else {
         ball.x = paddle.x + paddle.width / 2;
         ball.y = paddle.y - ball.radius - 2;
-        if (config.autopilot && !isPaused) {
+        if (config.autopilot && !isPaused && !isSettingsOpen) {
           launchBall();
         }
       }
     }
 
-    // High-Performance Batched Canvas Rendering
+    // Render Function
     function render() {
-      // Clear canvas
       ctx.fillStyle = '#000000';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      // Draw Bricks
       for (let c = 0; c < brickColumnCount; c++) {
         for (let r = 0; r < brickRowCount; r++) {
           const b = bricks[c][r];
@@ -716,18 +1036,15 @@
         }
       }
 
-      // Draw Paddle
       ctx.fillStyle = config.godMode ? '#00ffff' : '#ffffff';
       ctx.fillRect(paddle.x, paddle.y, paddle.width, paddle.height);
 
-      // Draw Ball
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(ball.x - ball.radius, ball.y - ball.radius, ball.radius * 2, ball.radius * 2);
 
-      // Draw Particles (Batched)
       drawParticles();
 
-      // Draw Retro Scoreboard
+      // Retro Scoreboard
       ctx.fillStyle = "#ffffff";
       ctx.font = "20px 'Courier New', Courier, monospace";
       ctx.textAlign = "left";
@@ -739,18 +1056,21 @@
       ctx.textAlign = "right";
       ctx.fillText(`HI: ${highScore.toString().padStart(4, '0')}`, canvas.width - 24, 42);
 
-      // Horizontal separator bar
       ctx.fillStyle = "#333333";
       ctx.fillRect(24, 60, canvas.width - 48, 2);
 
       // Overlays
       if (gameOver) {
-        drawOverlay("GAME OVER", "CLICK OR PRESS SPACE TO RETRY");
+        drawOverlay("GAME OVER", "CLICK OR PRESS SPACE TO START NEW GAME");
       } else if (gameWon) {
         drawOverlay("LEVEL CLEARED!", "CLICK OR PRESS SPACE FOR NEXT LEVEL");
-      } else if (isPaused) {
+      } else if (isPaused && !isSettingsOpen) {
         if (!ball.active) {
-          drawOverlay("READY!", "PRESS SPACE OR CLICK CANVAS TO LAUNCH");
+          if (isResumedSession) {
+            drawOverlay("GAME RESUMED!", `SCORE: ${score} | LEVEL: ${level} • PRESS SPACE TO LAUNCH`);
+          } else {
+            drawOverlay("READY!", "PRESS SPACE OR CLICK CANVAS TO LAUNCH");
+          }
         } else {
           drawOverlay("PAUSED", "PRESS SPACE TO RESUME");
         }
@@ -762,21 +1082,20 @@
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
       ctx.fillStyle = "#ff0040";
-      ctx.font = "bold 34px 'Courier New', Courier, monospace";
+      ctx.font = "bold 30px 'Courier New', Courier, monospace";
       ctx.textAlign = "center";
       ctx.fillText(title, canvas.width / 2, canvas.height / 2 - 15);
 
       ctx.fillStyle = "#ffffff";
-      ctx.font = "16px 'Courier New', Courier, monospace";
-      ctx.fillText(subtitle, canvas.width / 2, canvas.height / 2 + 28);
+      ctx.font = "14px 'Courier New', Courier, monospace";
+      ctx.fillText(subtitle, canvas.width / 2, canvas.height / 2 + 25);
     }
 
-    // Unified Fixed-Timestep Delta-Time Game Loop
+    // Delta-Time Game Loop
     let lastFrameTime = performance.now();
     function gameLoop(now) {
       const deltaMs = now - lastFrameTime;
       lastFrameTime = now;
-      
       const dt = Math.min(Math.max(deltaMs / 16.667, 0.1), 2.0);
 
       updatePhysics(dt);
@@ -786,9 +1105,15 @@
       requestAnimationFrame(gameLoop);
     }
 
-    // Initialize Game Immediately
-    initBricks();
-    resetBallPaddle();
+    // Initialize State
+    const hasSavedState = loadGameState();
+    if (!hasSavedState) {
+      initBricks();
+      resetBallPaddle();
+    } else {
+      resetBallPaddle();
+    }
+
     requestAnimationFrame(gameLoop);
   </script>
 </body>
