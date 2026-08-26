@@ -27,7 +27,7 @@ app.use(cors({
 
 app.use((_req: Request, res: Response, next: NextFunction) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("X-XSS-Protection: 1; mode=block", "1; mode=block");
+  res.setHeader("X-XSS-Protection", "1; mode=block");
   next();
 });
 
