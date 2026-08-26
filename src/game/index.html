@@ -1,0 +1,697 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Retro Atari Breakout</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: #000;
+      color: #fff;
+      font-family: 'Courier New', Courier, monospace;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+
+    /* Screen scanlines and container */
+    #arcade-cabinet {
+      position: relative;
+      border: 4px solid #333;
+      background-color: #050505;
+      padding: 10px;
+      box-shadow: 0 0 20px rgba(255, 255, 255, 0.1);
+      border-radius: 4px;
+      max-width: 100%;
+      aspect-ratio: 4/3;
+      width: 800px;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      background: #000;
+      image-rendering: pixelated;
+    }
+
+    /* Overlay CRT Scanline Effect */
+    #scanlines {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(
+        rgba(18, 16, 16, 0) 50%, 
+        rgba(0, 0, 0, 0.25) 50%
+      ), linear-gradient(
+        90deg,
+        rgba(255, 0, 0, 0.06),
+        rgba(0, 255, 0, 0.02),
+        rgba(0, 0, 255, 0.06)
+      );
+      background-size: 100% 4px, 6px 100%;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    /* Controls Overlay for Help */
+    #controls-tip {
+      margin-top: 12px;
+      font-size: 14px;
+      color: #888;
+      text-align: center;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .neon-text {
+      text-shadow: 0 0 5px #fff, 0 0 10px #ff007f;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="arcade-cabinet">
+    <div id="scanlines"></div>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+  </div>
+
+  <div id="controls-tip">
+    ◄ LEFT Arrow | RIGHT Arrow ► to Move • SPACE to Start/Pause • AI Autopilot Available
+  </div>
+
+  <!-- Load MCP Apps SDK as an ES module directly from CDN -->
+  <script type="module">
+    import { App } from "https://esm.sh/@modelcontextprotocol/ext-apps";
+
+    // Initialize MCP App
+    let mcpApp = null;
+    try {
+      mcpApp = new App();
+      await mcpApp.connect();
+      console.log("Connected to MCP Host successfully!");
+    } catch (e) {
+      console.warn("Failed to connect to MCP host. Running in standalone mode.", e);
+    }
+
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // Default Game Configuration
+    let config = {
+      paddleSize: 120,
+      ballSpeed: 5,
+      lives: 3,
+      autopilot: false,
+      godMode: false
+    };
+
+    // Game state variables
+    let score = 0;
+    let highScore = localStorage.getItem('breakout_high_score') || 0;
+    let currentLives = config.lives;
+    let isPaused = true;
+    let gameOver = false;
+    let gameWon = false;
+    let level = 1;
+
+    // Paddle state
+    let paddle = {
+      x: canvas.width / 2 - config.paddleSize / 2,
+      y: canvas.height - 40,
+      width: config.paddleSize,
+      height: 15,
+      speed: 8,
+      dx: 0
+    };
+
+    // Ball state
+    let ball = {
+      x: canvas.width / 2,
+      y: canvas.height - 60,
+      radius: 8,
+      speed: config.ballSpeed,
+      dx: 0,
+      dy: 0,
+      active: false
+    };
+
+    // Brick settings
+    const brickRowCount = 5;
+    const brickColumnCount = 10;
+    const brickWidth = 72;
+    const brickHeight = 18;
+    const brickPadding = 4;
+    const brickOffsetTop = 100;
+    const brickOffsetLeft = 24;
+
+    // Brick colors corresponding to Atari values
+    // Red (top) = 7 pts, Orange = 5 pts, Yellow = 3 pts, Green = 2 pts, Blue (bottom) = 1 pt
+    const rowProperties = [
+      { color: '#ff003c', points: 7 }, // Red
+      { color: '#ff7700', points: 5 }, // Orange
+      { color: '#ffcc00', points: 3 }, // Yellow
+      { color: '#00ff66', points: 2 }, // Green
+      { color: '#00ccff', points: 1 }  // Blue
+    ];
+
+    let bricks = [];
+    function initBricks() {
+      bricks = [];
+      for (let c = 0; c < brickColumnCount; c++) {
+        bricks[c] = [];
+        for (let r = 0; c < brickColumnCount && r < brickRowCount; r++) {
+          bricks[c][r] = { 
+            x: 0, 
+            y: 0, 
+            status: 1, 
+            color: rowProperties[r].color, 
+            points: rowProperties[r].points 
+          };
+        }
+      }
+    }
+
+    // Particle system for explosion effect
+    let particles = [];
+    function createExplosion(x, y, color) {
+      const particleCount = 15;
+      for (let i = 0; i < particleCount; i++) {
+        particles.push({
+          x: x,
+          y: y,
+          size: Math.random() * 4 + 3,
+          color: color,
+          vx: (Math.random() - 0.5) * 6,
+          vy: (Math.random() - 0.5) * 6 - 2, // Slight upward bias
+          alpha: 1,
+          life: 1.0,
+          decay: Math.random() * 0.02 + 0.015
+        });
+      }
+    }
+
+    function updateParticles() {
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += 0.1; // Gravity
+        p.alpha -= p.decay;
+        p.life -= p.decay;
+        if (p.life <= 0 || p.alpha <= 0) {
+          particles.splice(i, 1);
+        }
+      }
+    }
+
+    function drawParticles() {
+      particles.forEach(p => {
+        ctx.save();
+        ctx.globalAlpha = p.alpha;
+        ctx.fillStyle = p.color;
+        // Flat square arcade particles
+        ctx.fillRect(p.x, p.y, p.size, p.size);
+        ctx.restore();
+      });
+    }
+
+    // Initial setups
+    initBricks();
+
+    // Input handlers
+    let rightPressed = false;
+    let leftPressed = false;
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Right" || e.key === "ArrowRight") {
+        rightPressed = true;
+      } else if (e.key === "Left" || e.key === "ArrowLeft") {
+        leftPressed = true;
+      } else if (e.key === " " || e.code === "Space") {
+        e.preventDefault(); // Stop page scrolling
+        if (gameOver || gameWon) {
+          resetGame();
+        } else {
+          isPaused = !isPaused;
+        }
+      }
+    });
+
+    document.addEventListener("keyup", (e) => {
+      if (e.key === "Right" || e.key === "ArrowRight") {
+        rightPressed = false;
+      } else if (e.key === "Left" || e.key === "ArrowLeft") {
+        leftPressed = false;
+      }
+    });
+
+    // Touch and Mouse support
+    canvas.addEventListener("mousemove", (e) => {
+      if (config.autopilot) return; // Ignore input if autopilot is on
+      const rect = canvas.getBoundingClientRect();
+      const relativeX = (e.clientX - rect.left) * (canvas.width / rect.width);
+      if (relativeX > 0 && relativeX < canvas.width) {
+        paddle.x = relativeX - paddle.width / 2;
+      }
+    });
+
+    canvas.addEventListener("click", () => {
+      if (gameOver || gameWon) {
+        resetGame();
+      } else if (!ball.active) {
+        launchBall();
+      }
+    });
+
+    function launchBall() {
+      ball.active = true;
+      ball.speed = config.ballSpeed;
+      // Slanted upward launch
+      ball.dx = (Math.random() * 2 - 1) * ball.speed * 0.6;
+      ball.dy = -ball.speed;
+      isPaused = false;
+    }
+
+    function resetBallPaddle() {
+      paddle.x = canvas.width / 2 - paddle.width / 2;
+      ball.x = canvas.width / 2;
+      ball.y = paddle.y - 12;
+      ball.dx = 0;
+      ball.dy = 0;
+      ball.active = false;
+    }
+
+    function resetGame() {
+      score = 0;
+      currentLives = config.lives;
+      level = 1;
+      gameOver = false;
+      gameWon = false;
+      isPaused = true;
+      initBricks();
+      resetBallPaddle();
+    }
+
+    // Apply config changes from MCP Server
+    function applyConfiguration(newConfig) {
+      if (!newConfig) return;
+      console.log("Applying config updates:", newConfig);
+
+      if (newConfig.paddleSize !== undefined) {
+        config.paddleSize = Number(newConfig.paddleSize);
+        const diff = config.paddleSize - paddle.width;
+        paddle.width = config.paddleSize;
+        paddle.x -= diff / 2; // Center adjustments
+      }
+      if (newConfig.ballSpeed !== undefined) {
+        config.ballSpeed = Number(newConfig.ballSpeed);
+        if (ball.active) {
+          // Live scale velocity
+          const currentSpeed = Math.sqrt(ball.dx * ball.dx + ball.dy * ball.dy);
+          if (currentSpeed > 0) {
+            ball.dx = (ball.dx / currentSpeed) * config.ballSpeed;
+            ball.dy = (ball.dy / currentSpeed) * config.ballSpeed;
+          }
+        }
+      }
+      if (newConfig.lives !== undefined) {
+        const livesDiff = Number(newConfig.lives) - config.lives;
+        config.lives = Number(newConfig.lives);
+        currentLives = Math.max(1, currentLives + livesDiff);
+      }
+      if (newConfig.autopilot !== undefined) {
+        config.autopilot = Boolean(newConfig.autopilot);
+      }
+      if (newConfig.godMode !== undefined) {
+        config.godMode = Boolean(newConfig.godMode);
+      }
+
+      // Re-bound paddle inside borders
+      paddle.x = Math.max(0, Math.min(canvas.width - paddle.width, paddle.x));
+    }
+
+    // MCP Listeners
+    if (mcpApp) {
+      // Listen for tool results (this triggers when Gemini updates configurations)
+      mcpApp.ontoolresult = (event) => {
+        try {
+          const resultText = event.result?.content?.[0]?.text;
+          if (resultText) {
+            // Check if tool return payload is settings JSON
+            if (resultText.includes("{") && resultText.includes("}")) {
+              const startIdx = resultText.indexOf("{");
+              const endIdx = resultText.lastIndexOf("}") + 1;
+              const jsonStr = resultText.substring(startIdx, endIdx);
+              const data = JSON.parse(jsonStr);
+              if (data && data.settings) {
+                applyConfiguration(data.settings);
+              }
+              if (data && data.cheatApplied) {
+                handleCheat(data.cheatApplied);
+              }
+            }
+          }
+        } catch (e) {
+          console.error("Error parsing ontoolresult update:", e);
+        }
+      };
+
+      // Query server for starting configurations on load
+      try {
+        const initData = await mcpApp.callServerTool({
+          name: "get_game_config",
+          arguments: {}
+        });
+        const configText = initData?.content?.[0]?.text;
+        if (configText) {
+          const data = JSON.parse(configText);
+          if (data && data.settings) {
+            applyConfiguration(data.settings);
+            currentLives = config.lives; // Align lives on start
+          }
+        }
+      } catch (e) {
+        console.warn("Failed to get starting configurations from server.", e);
+      }
+    }
+
+    function handleCheat(cheat) {
+      if (cheat === "god_mode") {
+        config.godMode = true;
+      } else if (cheat === "extra_ball") {
+        // Simple cheat: add life
+        currentLives += 1;
+        createExplosion(paddle.x + paddle.width/2, paddle.y, "#ffffff");
+      } else if (cheat === "slow_ball") {
+        applyConfiguration({ ballSpeed: 3 });
+      } else if (cheat === "laser_paddle") {
+        applyConfiguration({ paddleSize: 220 });
+      } else if (cheat === "win_level") {
+        winLevel();
+      }
+    }
+
+    // Reporting milestones/state to Gemini
+    let lastSentScore = 0;
+    async function reportGameEvent(type, messageText) {
+      if (!mcpApp) return;
+      try {
+        console.log(`Reporting game event to Gemini: ${type} - ${messageText}`);
+        await mcpApp.updateModelContext({
+          content: [{
+            type: "text",
+            text: `[GAME EVENT: ${type}] ${messageText} (Current Score: ${score}, Level: ${level}, Paddle Size: ${paddle.width}px, Ball Speed: ${config.ballSpeed}, Autopilot: ${config.autopilot ? 'ON' : 'OFF'})`
+          }]
+        });
+      } catch (e) {
+        console.warn("Error sending model context update:", e);
+      }
+    }
+
+    function winLevel() {
+      gameWon = true;
+      isPaused = true;
+      ball.active = false;
+      createExplosion(canvas.width/2, canvas.height/2, '#00ff66');
+      reportGameEvent("LEVEL_WON", `The user completed Level ${level} with a score of ${score}! Recommend they try Level ${level+1} with a faster ball speed!`);
+    }
+
+    function triggerGameOver() {
+      gameOver = true;
+      isPaused = true;
+      ball.active = false;
+      createExplosion(ball.x, ball.y, '#ff003c');
+      
+      if (score > highScore) {
+        highScore = score;
+        localStorage.setItem('breakout_high_score', score);
+      }
+      reportGameEvent("GAME_OVER", `The player scored ${score} points and met their doom on Level ${level}. Rate their skill level (out of 10) and tease/praise them appropriately!`);
+    }
+
+    // Game logic physics & render
+    function movePaddle() {
+      if (config.autopilot && ball.active) {
+        // Human-like smooth autopilot tracking ball
+        const paddleCenter = paddle.x + paddle.width / 2;
+        const ballX = ball.x;
+        const diff = ballX - paddleCenter;
+        // Limit max bot speed to look smoother
+        const botMaxSpeed = paddle.speed * 1.1; 
+        if (Math.abs(diff) > 5) {
+          paddle.x += Math.sign(diff) * Math.min(Math.abs(diff), botMaxSpeed);
+        }
+      } else {
+        // Manual movement
+        if (rightPressed && paddle.x < canvas.width - paddle.width) {
+          paddle.x += paddle.speed;
+        } else if (leftPressed && paddle.x > 0) {
+          paddle.x -= paddle.speed;
+        }
+      }
+    }
+
+    function collisionDetection() {
+      let activeBricksCount = 0;
+      for (let c = 0; c < brickColumnCount; c++) {
+        for (let r = 0; r < brickRowCount; r++) {
+          let b = bricks[c][r];
+          if (b.status == 1) {
+            activeBricksCount++;
+            // Check box-circle collision
+            // Ball edges
+            const ballLeft = ball.x - ball.radius;
+            const ballRight = ball.x + ball.radius;
+            const ballTop = ball.y - ball.radius;
+            const ballBottom = ball.y + ball.radius;
+
+            const brickLeft = b.x;
+            const brickRight = b.x + brickWidth;
+            const brickTop = b.y;
+            const brickBottom = b.y + brickHeight;
+
+            if (ballRight >= brickLeft && ballLeft <= brickRight && 
+                ballBottom >= brickTop && ballTop <= brickBottom) {
+              
+              // Bounce mechanics: determine vertical vs horizontal impact
+              const fromLeft = Math.abs(ballRight - brickLeft);
+              const fromRight = Math.abs(ballLeft - brickRight);
+              const fromTop = Math.abs(ballBottom - brickTop);
+              const fromBottom = Math.abs(ballTop - brickBottom);
+
+              const minDiff = Math.min(fromLeft, fromRight, fromTop, fromBottom);
+
+              if (minDiff === fromTop || minDiff === fromBottom) {
+                ball.dy = -ball.dy;
+              } else {
+                ball.dx = -ball.dx;
+              }
+
+              b.status = 0;
+              score += b.points;
+              
+              // Retro sound or particle explosion
+              createExplosion(b.x + brickWidth / 2, b.y + brickHeight / 2, b.color);
+
+              // Periodic milestone announcements (every 100 points)
+              if (score - lastSentScore >= 100) {
+                lastSentScore = Math.floor(score / 100) * 100;
+                reportGameEvent("SCORE_MILESTONE", `The user reached a score of ${score}! Cheer them on in the chat!`);
+              }
+
+              break; // Handle one brick hit per frame
+            }
+          }
+        }
+      }
+
+      // Check level clear
+      if (activeBricksCount === 0 && !gameWon) {
+        winLevel();
+      }
+    }
+
+    function drawBall() {
+      ctx.fillStyle = '#ffffff';
+      // Classic square pixel ball
+      ctx.fillRect(ball.x - ball.radius, ball.y - ball.radius, ball.radius * 2, ball.radius * 2);
+    }
+
+    function drawPaddle() {
+      ctx.fillStyle = '#ffffff';
+      // Sharp retro arcade white paddle
+      ctx.fillRect(paddle.x, paddle.y, paddle.width, paddle.height);
+    }
+
+    function drawBricks() {
+      for (let c = 0; c < brickColumnCount; c++) {
+        for (let r = 0; r < brickRowCount; r++) {
+          if (bricks[c][r].status == 1) {
+            let brickX = (c * (brickWidth + brickPadding)) + brickOffsetLeft;
+            let brickY = (r * (brickHeight + brickPadding)) + brickOffsetTop;
+            bricks[c][r].x = brickX;
+            bricks[c][r].y = brickY;
+            ctx.fillStyle = bricks[c][r].color;
+            ctx.fillRect(brickX, brickY, brickWidth, brickHeight);
+          }
+        }
+      }
+    }
+
+    function drawScoreboard() {
+      ctx.font = "24px 'Press Start 2P', 'Courier New', monospace";
+      ctx.fillStyle = "#ffffff";
+      
+      // Retro alignment
+      ctx.textAlign = "left";
+      ctx.fillText(`SCORE: ${score.toString().padStart(4, '0')}`, 24, 45);
+      
+      ctx.textAlign = "center";
+      ctx.fillText(`LIVES: ${currentLives}`, canvas.width / 2, 45);
+
+      ctx.textAlign = "right";
+      ctx.fillText(`HI: ${highScore.toString().padStart(4, '0')}`, canvas.width - 24, 45);
+
+      // Horizontal classic separator line
+      ctx.fillStyle = "#333333";
+      ctx.fillRect(24, 65, canvas.width - 48, 3);
+    }
+
+    function drawOverlayScreen(title, subtitle) {
+      ctx.save();
+      ctx.fillStyle = "rgba(0, 0, 0, 0.75)";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.font = "32px 'Press Start 2P', 'Courier New', monospace";
+      ctx.fillStyle = "#ff003c";
+      ctx.textAlign = "center";
+      ctx.fillText(title, canvas.width / 2, canvas.height / 2 - 20);
+
+      ctx.font = "16px 'Press Start 2P', 'Courier New', monospace";
+      ctx.fillStyle = "#ffffff";
+      ctx.fillText(subtitle, canvas.width / 2, canvas.height / 2 + 30);
+      ctx.restore();
+    }
+
+    function update() {
+      if (isPaused || gameOver || gameWon) return;
+
+      movePaddle();
+
+      if (ball.active) {
+        ball.x += ball.dx;
+        ball.y += ball.dy;
+
+        // Bouncing on walls
+        if (ball.x - ball.radius <= 0) {
+          ball.x = ball.radius; // Clip inside boundary
+          ball.dx = -ball.dx;
+        } else if (ball.x + ball.radius >= canvas.width) {
+          ball.x = canvas.width - ball.radius;
+          ball.dx = -ball.dx;
+        }
+
+        if (ball.y - ball.radius <= 75) { // ceiling margin
+          ball.y = 75 + ball.radius;
+          ball.dy = -ball.dy;
+        }
+
+        // Bouncing on paddle
+        const paddleLeft = paddle.x;
+        const paddleRight = paddle.x + paddle.width;
+        const paddleTop = paddle.y;
+        
+        if (ball.y + ball.radius >= paddleTop && ball.y - ball.radius <= paddleTop + paddle.height) {
+          if (ball.x >= paddleLeft && ball.x <= paddleRight) {
+            // Calculate hit sector relative to paddle center to adjust reflection angle
+            const paddleCenter = paddleLeft + paddle.width / 2;
+            const hitOffset = ball.x - paddleCenter;
+            const normalizedOffset = hitOffset / (paddle.width / 2); // -1 to 1
+
+            // Dynamic deflection angle
+            ball.dx = normalizedOffset * ball.speed * 0.8;
+            ball.dy = -Math.sqrt(ball.speed * ball.speed - ball.dx * ball.dx);
+            
+            // Pop ball up to prevent trapping
+            ball.y = paddleTop - ball.radius;
+          }
+        }
+
+        // Falling below paddle (lose life)
+        if (ball.y + ball.radius > canvas.height) {
+          if (config.godMode) {
+            // God Mode bounces ball automatically at screen bottom
+            ball.y = canvas.height - ball.radius;
+            ball.dy = -ball.dy;
+          } else {
+            currentLives--;
+            if (currentLives <= 0) {
+              triggerGameOver();
+            } else {
+              reportGameEvent("LIFE_LOST", `The ball slipped by! Lives remaining: ${currentLives}. Encouraging words requested!`);
+              resetBallPaddle();
+            }
+          }
+        }
+
+        collisionDetection();
+      } else {
+        // Snap ball to paddle if not launched
+        ball.x = paddle.x + paddle.width / 2;
+        ball.y = paddle.y - ball.radius - 2;
+
+        // Auto-launch after 2 seconds if autopilot is on
+        if (config.autopilot && !isPaused) {
+          launchBall();
+        }
+      }
+    }
+
+    function render() {
+      // Clear screen
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      drawBricks();
+      drawPaddle();
+      drawBall();
+      drawParticles();
+      drawScoreboard();
+
+      // UI Screens
+      if (gameOver) {
+        drawOverlayScreen("GAME OVER", "CLICK TO PLAY AGAIN");
+      } else if (gameWon) {
+        drawOverlayScreen("LEVEL CLEARED!", "CLICK TO RETRY / NEXT LEVEL");
+      } else if (isPaused) {
+        if (!ball.active) {
+          drawOverlayScreen("READY!", "CLICK SCREEN OR PRESS SPACE TO LAUNCH");
+        } else {
+          drawOverlayScreen("PAUSED", "PRESS SPACE TO RESUME");
+        }
+      }
+    }
+
+    // Unified game loop
+    function gameLoop() {
+      update();
+      updateParticles();
+      render();
+      requestAnimationFrame(gameLoop);
+    }
+
+    gameLoop();
+  </script>
+</body>
+</html>
