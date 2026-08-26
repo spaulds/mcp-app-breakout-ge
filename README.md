@@ -77,8 +77,11 @@ Includes a built-in, zero-dependency OAuth 2.0 authorization server (RFC 6749 & 
 
 ---
 
-## 🚀 Quick Deployment (Google Cloud)
+## 🚀 Deployment & Enterprise Setup
 
+* **Full Step-by-Step Enterprise Guide:** See [docs/GEAP_ENTERPRISE_SETUP.md](docs/GEAP_ENTERPRISE_SETUP.md) for complete end-to-end instructions covering Agent Registry, Agent Gateway (`demo-gateway2`), AuthzPolicy, Model Armor, custom IAM roles, and Discovery Engine Data Store wiring.
+
+### Quick Start (Google Cloud Run)
 ```bash
 # 1. Deploy private Cloud Run service
 gcloud run deploy mcp-breakout-arcade \
@@ -100,10 +103,10 @@ gcloud run services add-iam-policy-binding mcp-breakout-arcade \
   --region=us-central1 \
   --project=<PROJECT_ID>
 
-# 3. Register service in Agent Registry / Gemini Enterprise Console
-# Register URL: https://<CLOUD_RUN_URL>/mcp
-# Authorize URL: https://<CLOUD_RUN_URL>/authorize (PKCE S256)
-# Token URL: https://<CLOUD_RUN_URL>/token
+# 3. Connect in Gemini Enterprise Console (OAuth 2.0 PKCE S256)
+# MCP URL:       https://<CLOUD_RUN_URL>/mcp
+# Authorize URL: https://<CLOUD_RUN_URL>/authorize
+# Token URL:     https://<CLOUD_RUN_URL>/token
 ```
 
 ---
