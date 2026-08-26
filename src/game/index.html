@@ -340,10 +340,8 @@
           this.handleIncomingMessage(event);
         });
 
+        // Step 1: Send ui/initialize to Host
         this.sendInitialize();
-        this.sendInitializedNotification();
-        setTimeout(() => this.sendInitializedNotification(), 50);
-        setTimeout(() => this.sendInitializedNotification(), 250);
       }
 
       sendToHost(message) {

@@ -284,6 +284,7 @@ function executeToolCall(name: string, args: any) {
           text: "I have initialized the Retro Breakout Game! The interactive Atari Breakout canvas is loaded directly into your chat window below. Control the paddle using your Left and Right arrow keys or touch swipe, or ask me to turn on AI Autopilot or adjust settings for you!"
         }
       ],
+      isError: false,
       _meta: {
         ui: {
           resourceUri: "ui://breakout"
@@ -309,6 +310,7 @@ function executeToolCall(name: string, args: any) {
           })
         }
       ],
+      isError: false,
       _meta: {
         ui: {
           resourceUri: "ui://breakout"
@@ -362,6 +364,7 @@ function executeToolCall(name: string, args: any) {
           })
         }
       ],
+      isError: false,
       _meta: {
         ui: {
           resourceUri: "ui://breakout"
@@ -404,6 +407,7 @@ function executeToolCall(name: string, args: any) {
           })
         }
       ],
+      isError: false,
       _meta: {
         ui: {
           resourceUri: "ui://breakout"
@@ -594,6 +598,20 @@ app.post("/mcp", async (req: Request, res: Response) => {
         result = {};
         break;
 
+      case "notifications/initialized":
+      case "initialized":
+      case "notifications/cancelled":
+      case "notifications/progress":
+      case "notifications/roots/list_changed":
+      case "notifications/resources/list_changed":
+      case "notifications/tools/list_changed":
+        // MCP notifications: Notifications MUST NOT return an error response
+        res.status(200).json({
+          jsonrpc: "2.0",
+          result: {}
+        });
+        return;
+
       case "tools/list":
         result = { tools: TOOL_DEFINITIONS };
         break;
@@ -603,18 +621,19 @@ app.post("/mcp", async (req: Request, res: Response) => {
         break;
 
       case "resources/read":
-        if (params?.uri === "ui://breakout") {
+        const targetUri = params?.uri || params?.resourceUri || "";
+        if (targetUri && (targetUri === "ui://breakout" || targetUri.startsWith("ui://breakout"))) {
           result = {
             contents: [
               {
-                uri: "ui://breakout",
+                uri: targetUri,
                 mimeType: "text/html;profile=mcp-app",
                 text: CACHED_GAME_HTML
               }
             ]
           };
         } else {
-          throw { code: -32602, message: `Resource not found: ${params?.uri}` };
+          throw { code: -32602, message: `Resource not found: ${targetUri}` };
         }
         break;
 
@@ -623,6 +642,15 @@ app.post("/mcp", async (req: Request, res: Response) => {
         break;
 
       default:
+        // Gracefully handle any client notifications or unexpected notification methods
+        if (id === undefined || id === null || (typeof method === "string" && method.startsWith("notifications/"))) {
+          console.log(`[JSON-RPC POST] Handled client notification: ${method}`);
+          res.status(200).json({
+            jsonrpc: "2.0",
+            result: {}
+          });
+          return;
+        }
         console.warn(`[JSON-RPC POST] Method not implemented: ${method}`);
         res.status(200).json({
           jsonrpc: "2.0",
