@@ -77,10 +77,10 @@
     /* In-App Retro Settings Drawer / Modal */
     #settings-btn {
       position: absolute;
-      top: 10px;
+      bottom: 10px;
       right: 12px;
       z-index: 20;
-      background: rgba(0, 0, 0, 0.7);
+      background: rgba(0, 0, 0, 0.75);
       border: 1px solid #00ff66;
       color: #00ff66;
       padding: 4px 8px;
@@ -301,10 +301,12 @@
 
         <div style="font-size: 10px; color: #888; margin-top: 6px; letter-spacing: 1px; text-transform: uppercase;">Instant Cheats:</div>
         <div class="cheats-grid">
-          <button class="cheat-btn" id="cheat-laser">💥 Laser Paddle</button>
+          <button class="cheat-btn" id="cheat-mega">📏 Mega Paddle</button>
+          <button class="cheat-btn" id="cheat-laser">⚡ Laser Cannons</button>
           <button class="cheat-btn" id="cheat-life">💖 +1 Extra Life</button>
           <button class="cheat-btn" id="cheat-slow">🐢 Slow Ball</button>
           <button class="cheat-btn" id="cheat-skip">⏭️ Skip Level</button>
+          <button class="cheat-btn" id="cheat-god">🛡️ God Mode</button>
         </div>
 
         <div class="action-row">
@@ -316,8 +318,9 @@
   </div>
 
   <div id="controls-tip">
-    ◄ LEFT / RIGHT ► Keys • SPACE to Launch/Pause • Press [ESC] for Settings
+    ◄ LEFT / RIGHT ► Keys • SPACE or CLICK to Launch/Fire • [ESC] for Settings
     <span id="ai-status" class="badge" style="display:none;">AI AUTOPILOT ACTIVE</span>
+    <span id="laser-status" class="badge" style="display:none; color:#ff007f; border-color:#ff007f;">LASER CANNONS READY</span>
   </div>
 
   <script>
@@ -453,6 +456,7 @@
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d', { alpha: false });
     const aiStatusBadge = document.getElementById('ai-status');
+    const laserStatusBadge = document.getElementById('laser-status');
 
     // UI Drawer Elements
     const settingsBtn = document.getElementById('settings-btn');
@@ -490,6 +494,8 @@
     let isResumedSession = false;
     let level = 1;
     let lastSentScore = 0;
+    let hasLasers = false;
+    const lasers = [];
 
     // Paddle
     const paddle = {
@@ -565,6 +571,7 @@
           gameOver: gameOver,
           gameWon: gameWon,
           config: config,
+          hasLasers: hasLasers,
           brickMatrix: brickStatusMatrix,
           timestamp: Date.now()
         };
@@ -592,6 +599,8 @@
         level = saved.level || 1;
         gameWon = Boolean(saved.gameWon);
         gameOver = false;
+        hasLasers = Boolean(saved.hasLasers);
+        if (laserStatusBadge) laserStatusBadge.style.display = hasLasers ? 'inline-block' : 'none';
 
         if (saved.config) {
           applyConfiguration(saved.config, false);
@@ -684,6 +693,24 @@
       ctx.globalAlpha = 1.0;
     }
 
+    function fireLasers() {
+      if (!hasLasers || isPaused || isSettingsOpen || gameOver || gameWon) return;
+      lasers.push({
+        x: paddle.x + 8,
+        y: paddle.y - 6,
+        vy: -14,
+        active: true
+      });
+      lasers.push({
+        x: paddle.x + paddle.width - 8,
+        y: paddle.y - 6,
+        vy: -14,
+        active: true
+      });
+      spawnExplosion(paddle.x + 8, paddle.y - 4, '#ff007f', 4);
+      spawnExplosion(paddle.x + paddle.width - 8, paddle.y - 4, '#ff007f', 4);
+    }
+
     // Input Handling
     let rightPressed = false;
     let leftPressed = false;
@@ -699,12 +726,16 @@
         rightPressed = true;
       } else if (e.key === "Left" || e.key === "ArrowLeft") {
         leftPressed = true;
-      } else if (e.key === " " || e.code === "Space") {
+      } else if (e.key === " " || e.code === "Space" || e.key === "f" || e.key === "F") {
         e.preventDefault();
-        if (gameOver || gameWon) {
+        if (gameOver) {
           resetGame(true);
+        } else if (gameWon) {
+          nextLevel();
         } else if (!ball.active) {
           launchBall();
+        } else if (hasLasers) {
+          fireLasers();
         } else {
           isPaused = !isPaused;
         }
@@ -730,10 +761,14 @@
 
     canvas.addEventListener("click", () => {
       if (isSettingsOpen) return;
-      if (gameOver || gameWon) {
+      if (gameOver) {
         resetGame(true);
+      } else if (gameWon) {
+        nextLevel();
       } else if (!ball.active) {
         launchBall();
+      } else if (hasLasers) {
+        fireLasers();
       }
     });
 
@@ -755,17 +790,32 @@
       ball.active = false;
     }
 
+    function nextLevel() {
+      level += 1;
+      gameWon = false;
+      gameOver = false;
+      isPaused = true;
+      isResumedSession = false;
+      lasers.length = 0;
+      initBricks();
+      resetBallPaddle();
+      saveGameState();
+    }
+
     function resetGame(fullReset = false) {
       if (fullReset) {
         score = 0;
         level = 1;
         currentLives = config.lives;
+        hasLasers = false;
+        if (laserStatusBadge) laserStatusBadge.style.display = 'none';
         clearGameState();
       }
       gameOver = false;
       gameWon = false;
       isPaused = true;
       isResumedSession = false;
+      lasers.length = 0;
       initBricks();
       resetBallPaddle();
       saveGameState();
@@ -831,9 +881,14 @@
         spawnExplosion(canvas.width / 2, 45, "#ffffff", 20);
       } else if (cheat === "slow_ball" || cheat === "slowBall") {
         applyConfiguration({ ballSpeed: 3.5 });
+      } else if (cheat === "mega_paddle" || cheat === "megaPaddle") {
+        applyConfiguration({ paddleSize: 220 });
+        spawnExplosion(paddle.x + paddle.width / 2, paddle.y, "#00ff66", 25);
       } else if (cheat === "laser_paddle" || cheat === "laserPaddle") {
-        applyConfiguration({ paddleSize: 240 });
-        spawnExplosion(paddle.x + paddle.width / 2, paddle.y, "#ff00ff", 30);
+        hasLasers = true;
+        if (laserStatusBadge) laserStatusBadge.style.display = 'inline-block';
+        applyConfiguration({ paddleSize: 180 });
+        spawnExplosion(paddle.x + paddle.width / 2, paddle.y, "#ff007f", 30);
       } else if (cheat === "win_level" || cheat === "levelBypass") {
         winLevel();
       }
@@ -904,10 +959,12 @@
       mcp.updateModelContext(`[USER ACTION] God Mode set to ${config.godMode ? 'ON' : 'OFF'}`);
     });
 
+    document.getElementById('cheat-mega').addEventListener('click', () => handleCheat('mega_paddle'));
     document.getElementById('cheat-laser').addEventListener('click', () => handleCheat('laser_paddle'));
     document.getElementById('cheat-life').addEventListener('click', () => handleCheat('extra_ball'));
     document.getElementById('cheat-slow').addEventListener('click', () => handleCheat('slow_ball'));
     document.getElementById('cheat-skip').addEventListener('click', () => handleCheat('win_level'));
+    document.getElementById('cheat-god').addEventListener('click', () => handleCheat('god_mode'));
 
     // Physics & Collision Loop
     function updatePhysics(dt) {
@@ -926,6 +983,44 @@
         } else if (leftPressed && paddle.x > 0) {
           paddle.x -= paddle.speed * dt;
         }
+      }
+
+      // Update Lasers
+      for (let i = 0; i < lasers.length; i++) {
+        const l = lasers[i];
+        if (l.active) {
+          l.y += l.vy * dt;
+          if (l.y < 65) {
+            l.active = false;
+            continue;
+          }
+
+          // Check collision with active bricks
+          for (let c = 0; c < brickColumnCount; c++) {
+            for (let r = 0; r < brickRowCount; r++) {
+              const b = bricks[c][r];
+              if (b.status === 1) {
+                if (l.x >= b.x && l.x <= b.x + brickWidth &&
+                    l.y >= b.y && l.y <= b.y + brickHeight) {
+                  b.status = 0;
+                  score += b.points;
+                  l.active = false;
+                  saveGameState();
+                  spawnExplosion(b.x + brickWidth / 2, b.y + brickHeight / 2, b.color, 16);
+                  if (score - lastSentScore >= 100) {
+                    lastSentScore = Math.floor(score / 100) * 100;
+                    mcp.updateModelContext(`[BREAKOUT GAME EVENT: SCORE_UPDATE] Player reached ${score} points with Laser Blasters!`);
+                  }
+                  break;
+                }
+              }
+            }
+            if (!l.active) break;
+          }
+        }
+      }
+      for (let i = lasers.length - 1; i >= 0; i--) {
+        if (!lasers[i].active) lasers.splice(i, 1);
       }
 
       if (ball.active) {
@@ -1036,34 +1131,53 @@
         }
       }
 
-      ctx.fillStyle = config.godMode ? '#00ffff' : '#ffffff';
+      // Draw Laser Projectiles
+      for (let i = 0; i < lasers.length; i++) {
+        const l = lasers[i];
+        if (l.active) {
+          ctx.fillStyle = '#ff007f';
+          ctx.fillRect(l.x - 2, l.y - 8, 4, 12);
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(l.x - 1, l.y - 6, 2, 8);
+        }
+      }
+
+      // Draw Paddle
+      ctx.fillStyle = config.godMode ? '#00ffff' : (hasLasers ? '#ff007f' : '#ffffff');
       ctx.fillRect(paddle.x, paddle.y, paddle.width, paddle.height);
+
+      // Draw Laser Cannons on Paddle
+      if (hasLasers) {
+        ctx.fillStyle = '#00ffcc';
+        ctx.fillRect(paddle.x + 4, paddle.y - 6, 8, 6);
+        ctx.fillRect(paddle.x + paddle.width - 12, paddle.y - 6, 8, 6);
+      }
 
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(ball.x - ball.radius, ball.y - ball.radius, ball.radius * 2, ball.radius * 2);
 
       drawParticles();
 
-      // Retro Scoreboard
+      // Retro Scoreboard with clean spacing (no overlap with any UI elements)
       ctx.fillStyle = "#ffffff";
-      ctx.font = "20px 'Courier New', Courier, monospace";
+      ctx.font = "bold 18px 'Courier New', Courier, monospace";
       ctx.textAlign = "left";
-      ctx.fillText(`SCORE: ${score.toString().padStart(4, '0')}`, 24, 42);
+      ctx.fillText(`SCORE: ${score.toString().padStart(4, '0')}`, 24, 38);
 
       ctx.textAlign = "center";
-      ctx.fillText(`LIVES: ${currentLives}`, canvas.width / 2, 42);
+      ctx.fillText(`HI-SCORE: ${highScore.toString().padStart(4, '0')}`, canvas.width / 2, 38);
 
       ctx.textAlign = "right";
-      ctx.fillText(`HI: ${highScore.toString().padStart(4, '0')}`, canvas.width - 24, 42);
+      ctx.fillText(`LIVES: ${currentLives}`, canvas.width - 24, 38);
 
       ctx.fillStyle = "#333333";
-      ctx.fillRect(24, 60, canvas.width - 48, 2);
+      ctx.fillRect(24, 52, canvas.width - 48, 2);
 
       // Overlays
       if (gameOver) {
         drawOverlay("GAME OVER", "CLICK OR PRESS SPACE TO START NEW GAME");
       } else if (gameWon) {
-        drawOverlay("LEVEL CLEARED!", "CLICK OR PRESS SPACE FOR NEXT LEVEL");
+        drawOverlay(`LEVEL ${level} CLEARED!`, `SCORE: ${score} • CLICK OR SPACE FOR LEVEL ${level + 1}`);
       } else if (isPaused && !isSettingsOpen) {
         if (!ball.active) {
           if (isResumedSession) {

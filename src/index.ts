@@ -150,8 +150,8 @@ const TOOL_DEFINITIONS = [
       properties: {
         cheat: {
           type: "string",
-          enum: ["god_mode", "extra_ball", "slow_ball", "laser_paddle", "win_level"],
-          description: "The name of the cheat code to activate."
+          enum: ["mega_paddle", "laser_paddle", "god_mode", "extra_ball", "slow_ball", "win_level"],
+          description: "The name of the cheat code to activate. 'mega_paddle' widens the paddle to 220px, 'laser_paddle' equips twin laser blaster cannons to shoot bricks, 'god_mode' makes you invincible, 'extra_ball' adds a life, 'slow_ball' reduces speed, 'win_level' instantly clears the level."
         }
       },
       required: ["cheat"]
@@ -165,12 +165,12 @@ const TOOL_DEFINITIONS = [
       properties: {
         cheatType: {
           type: "string",
-          enum: ["godMode", "extraBall", "slowBall", "laserPaddle", "levelBypass"],
+          enum: ["megaPaddle", "laserPaddle", "godMode", "extraBall", "slowBall", "levelBypass"],
           description: "The name of the cheat code to activate."
         },
         cheat: {
           type: "string",
-          enum: ["god_mode", "extra_ball", "slow_ball", "laser_paddle", "win_level"],
+          enum: ["mega_paddle", "laser_paddle", "god_mode", "extra_ball", "slow_ball", "win_level"],
           description: "The name of the cheat code to activate."
         }
       },
@@ -278,14 +278,16 @@ function executeToolCall(name: string, args: any) {
     if (cheat === "godMode") cheat = "god_mode";
     if (cheat === "extraBall") cheat = "extra_ball";
     if (cheat === "slowBall") cheat = "slow_ball";
+    if (cheat === "megaPaddle") cheat = "mega_paddle";
     if (cheat === "laserPaddle") cheat = "laser_paddle";
     if (cheat === "levelBypass") cheat = "win_level";
 
     let desc = "";
-    if (cheat === "god_mode") desc = "Invincibility (God Mode) enabled! The ball bounces on the screen bottom.";
+    if (cheat === "god_mode") desc = "Invincibility (God Mode) enabled! The ball bounces safely on the screen bottom.";
     if (cheat === "extra_ball") desc = "One extra life awarded!";
     if (cheat === "slow_ball") desc = "Ball speed decreased for easy tracking.";
-    if (cheat === "laser_paddle") desc = "Paddle widened to laser width!";
+    if (cheat === "mega_paddle") desc = "Mega Paddle activated! Paddle widened to 220px.";
+    if (cheat === "laser_paddle") desc = "Laser Cannons equipped! Twin blaster turrets shoot lasers on click/space to destroy bricks.";
     if (cheat === "win_level") desc = "Current level cleared!";
 
     return {
@@ -310,55 +312,75 @@ function executeToolCall(name: string, args: any) {
   throw new Error(`Tool not found: ${name}`);
 }
 
-// --- Initialize MCP SDK Server ---
-const server = new Server(
-  {
-    name: "retro-breakout-server",
-    version: "1.1.0"
-  },
-  {
-    capabilities: {
-      tools: {},
-      resources: {}
+// --- Factory to create fresh MCP SDK Server instances per SSE connection ---
+function createMcpServerInstance(): Server {
+  const s = new Server(
+    {
+      name: "retro-breakout-server",
+      version: "1.2.0"
+    },
+    {
+      capabilities: {
+        tools: {},
+        resources: {}
+      }
     }
-  }
-);
+  );
 
-// Register MCP SDK Handlers
-server.setRequestHandler(ListResourcesRequestSchema, async () => {
-  return { resources: RESOURCE_DEFINITIONS };
-});
+  s.setRequestHandler(ListResourcesRequestSchema, async () => {
+    return { resources: RESOURCE_DEFINITIONS };
+  });
 
-server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
-  console.log(`[RESOURCE READ] Client is reading resource: ${request.params.uri}`);
-  if (request.params.uri === "ui://breakout") {
-    return {
-      contents: [
-        {
-          uri: "ui://breakout",
-          mimeType: "text/html;profile=mcp-app",
-          text: CACHED_GAME_HTML
-        }
-      ]
-    };
-  }
-  throw new Error(`Resource not found: ${request.params.uri}`);
-});
+  s.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    console.log(`[RESOURCE READ] Client is reading resource: ${request.params.uri}`);
+    if (request.params.uri === "ui://breakout") {
+      return {
+        contents: [
+          {
+            uri: "ui://breakout",
+            mimeType: "text/html;profile=mcp-app",
+            text: CACHED_GAME_HTML
+          }
+        ]
+      };
+    }
+    throw new Error(`Resource not found: ${request.params.uri}`);
+  });
 
-server.setRequestHandler(ListToolsRequestSchema, async () => {
-  return { tools: TOOL_DEFINITIONS };
-});
+  s.setRequestHandler(ListToolsRequestSchema, async () => {
+    return { tools: TOOL_DEFINITIONS };
+  });
 
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
-  return executeToolCall(name, args);
-});
+  s.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const { name, arguments: args } = request.params;
+    return executeToolCall(name, args);
+  });
+
+  return s;
+}
 
 // Map to track active SSE transports
 const transports = new Map<string, SSEServerTransport>();
 
 // --- Server-Sent Events (SSE) Routes ---
 app.get("/mcp", async (req, res) => {
+  // If a standard web browser loads /mcp in the address bar (Accept: text/html), return status UI instead of raw SSE
+  if (req.accepts("html") && !req.headers.accept?.includes("text/event-stream")) {
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.send(`<!DOCTYPE html><html><head><title>Breakout MCP Server</title></head><body style="background:#0f172a;color:#f8fafc;font-family:system-ui,sans-serif;padding:3rem;line-height:1.6;">
+      <h1 style="color:#38bdf8;">🕹️ Retro Breakout MCP Server</h1>
+      <p style="color:#94a3b8;">Server is healthy and ready for Gemini Enterprise & Agent Gateway.</p>
+      <div style="background:#1e293b;padding:1.5rem;border-radius:8px;margin-top:1rem;">
+        <p><strong>Protocol:</strong> Model Context Protocol (MCP Apps)</p>
+        <p><strong>MCP JSON-RPC Endpoint:</strong> <code>POST /mcp</code></p>
+        <p><strong>MCP SSE Endpoint:</strong> <code>GET /mcp</code></p>
+        <p><strong>UI Resource URI:</strong> <code>ui://breakout</code></p>
+      </div>
+      <p style="margin-top:1.5rem;"><a href="/game" style="color:#38bdf8;text-decoration:underline;">Open Direct Game Preview &rarr;</a></p>
+    </body></html>`);
+    return;
+  }
+
   console.log("[SSE] Establishing new MCP SSE transport connection...");
   res.setHeader("X-Accel-Buffering", "no");
   res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -387,7 +409,12 @@ app.get("/mcp", async (req, res) => {
     transports.delete(sessionId);
   };
 
-  await server.connect(transport);
+  try {
+    const sseServer = createMcpServerInstance();
+    await sseServer.connect(transport);
+  } catch (err) {
+    console.error(`[SSE ERROR] Error connecting transport for session ${sessionId}:`, err);
+  }
 });
 
 app.post("/mcp/messages", async (req, res) => {
@@ -400,7 +427,11 @@ app.post("/mcp/messages", async (req, res) => {
     return;
   }
 
-  await transport.handlePostMessage(req, res);
+  try {
+    await transport.handlePostMessage(req, res);
+  } catch (err) {
+    console.error(`[SSE POST ERROR] Error handling message for ${sessionId}:`, err);
+  }
 });
 
 // --- High-Performance Stateless JSON-RPC POST /mcp Dispatcher ---
@@ -555,4 +586,12 @@ app.listen(port, () => {
   console.log(`🔗 MCP Stateless JSON-RPC: http://localhost:${port}/mcp (POST)`);
   console.log(`🎮 Direct Game Preview: http://localhost:${port}/game`);
   console.log(`=============================================================`);
+});
+
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("[CRITICAL] Unhandled Rejection at:", promise, "reason:", reason);
+});
+
+process.on("uncaughtException", (err) => {
+  console.error("[CRITICAL] Uncaught Exception thrown:", err);
 });

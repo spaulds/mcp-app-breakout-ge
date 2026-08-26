@@ -104,8 +104,8 @@
         "properties": {
           "cheat": {
             "type": "string",
-            "enum": ["god_mode", "extra_ball", "slow_ball", "laser_paddle", "win_level"],
-            "description": "The name of the cheat code to activate."
+            "enum": ["mega_paddle", "laser_paddle", "god_mode", "extra_ball", "slow_ball", "win_level"],
+            "description": "The name of the cheat code to activate. 'mega_paddle' widens the paddle to 220px, 'laser_paddle' equips twin laser blaster cannons to shoot bricks, 'god_mode' makes you invincible, 'extra_ball' adds a life, 'slow_ball' reduces speed, 'win_level' clears the level."
           }
         },
         "required": ["cheat"]
@@ -119,12 +119,12 @@
         "properties": {
           "cheatType": {
             "type": "string",
-            "enum": ["godMode", "extraBall", "slowBall", "laserPaddle", "levelBypass"],
+            "enum": ["megaPaddle", "laserPaddle", "godMode", "extraBall", "slowBall", "levelBypass"],
             "description": "The name of the cheat code to activate."
           },
           "cheat": {
             "type": "string",
-            "enum": ["god_mode", "extra_ball", "slow_ball", "laser_paddle", "win_level"],
+            "enum": ["mega_paddle", "laser_paddle", "god_mode", "extra_ball", "slow_ball", "win_level"],
             "description": "The name of the cheat code to activate."
           }
         },
