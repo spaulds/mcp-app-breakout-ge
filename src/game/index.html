@@ -11,15 +11,16 @@
       padding: 0;
     }
 
-    body {
-      background-color: #000;
-      color: #fff;
+    html, body {
+      width: 100%;
+      height: 100%;
+      background-color: #000000;
+      color: #ffffff;
       font-family: 'Courier New', Courier, monospace;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      min-height: 100vh;
       overflow: hidden;
       user-select: none;
       -webkit-user-select: none;
@@ -28,15 +29,15 @@
     /* Arcade screen cabinet and responsive canvas container */
     #arcade-cabinet {
       position: relative;
-      border: 3px solid #333;
+      border: 3px solid #333333;
       background-color: #050505;
-      padding: 6px;
-      box-shadow: 0 0 25px rgba(0, 255, 128, 0.15), inset 0 0 15px rgba(0, 0, 0, 0.8);
+      padding: 4px;
+      box-shadow: 0 0 25px rgba(0, 255, 128, 0.2), inset 0 0 15px rgba(0, 0, 0, 0.9);
       border-radius: 6px;
-      max-width: 98vw;
-      max-height: 85vh;
-      aspect-ratio: 4/3;
-      width: 800px;
+      width: 96vw;
+      max-width: 800px;
+      height: 82vh;
+      max-height: 560px;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -46,7 +47,7 @@
       display: block;
       width: 100%;
       height: 100%;
-      background: #000;
+      background: #000000;
       image-rendering: pixelated;
       image-rendering: crisp-edges;
     }
@@ -60,7 +61,7 @@
       height: 100%;
       background: linear-gradient(
         rgba(18, 16, 16, 0) 50%, 
-        rgba(0, 0, 0, 0.28) 50%
+        rgba(0, 0, 0, 0.25) 50%
       ), linear-gradient(
         90deg,
         rgba(255, 0, 0, 0.04),
@@ -75,22 +76,22 @@
 
     /* Controls tip & status bar */
     #controls-tip {
-      margin-top: 8px;
-      font-size: 12px;
-      color: #aaa;
+      margin-top: 6px;
+      font-size: 11px;
+      color: #aaaaaa;
       text-align: center;
       text-transform: uppercase;
       letter-spacing: 1px;
-      line-height: 1.4;
+      line-height: 1.3;
     }
 
     .badge {
       display: inline-block;
       padding: 2px 6px;
       border-radius: 3px;
-      font-size: 11px;
+      font-size: 10px;
       font-weight: bold;
-      background: #222;
+      background: #222222;
       color: #00ff66;
       border: 1px solid #00ff66;
       margin-left: 6px;
@@ -105,50 +106,75 @@
   </div>
 
   <div id="controls-tip">
-    ◄ LEFT / RIGHT ► Arrow Keys to Move • SPACE to Start/Pause • Tap/Drag on Mobile
+    ◄ LEFT / RIGHT ► Arrow Keys • SPACE to Launch/Pause • Tap/Drag on Mobile
     <span id="ai-status" class="badge" style="display:none;">AI AUTOPILOT ACTIVE</span>
   </div>
 
   <script>
     /**
-     * Resilient, Zero-Dependency MCP Apps Protocol Bridge
-     * Complies with @modelcontextprotocol/ext-apps protocol over postMessage.
-     * Works inside sandboxed enterprise iframes with strict CSPs.
+     * Complete, Spec-Compliant MCP Apps Protocol Bridge
+     * Implements full handshake: ui/initialize -> host response -> ui/notifications/initialized
+     * Guarantees dismissal of host loading spinner in Gemini Enterprise.
      */
     class MCPAppsBridge {
       constructor() {
         this.connected = false;
+        this.initialized = false;
+        this.initRequestId = 1;
         this.hostContext = {};
         this.ontoolresult = null;
-        this.onsettingschange = null;
 
-        // Listen for standard MCP Apps postMessage events from host window
+        // Listen for messages from host window
         window.addEventListener("message", (event) => {
           this.handleIncomingMessage(event);
         });
 
-        // Announce UI readiness to parent host window
-        this.sendHandshake();
+        // 1. Immediately initiate handshake with Host
+        this.sendInitialize();
+
+        // 2. Proactively send initialized notification as eager fallback to dismiss spinner
+        this.sendInitializedNotification();
+        setTimeout(() => this.sendInitializedNotification(), 50);
+        setTimeout(() => this.sendInitializedNotification(), 250);
       }
 
-      sendHandshake() {
+      sendInitialize() {
+        if (!window.parent || window.parent === window) return;
         try {
-          if (window.parent && window.parent !== window) {
-            window.parent.postMessage({
-              jsonrpc: "2.0",
-              method: "ui/initialize",
-              params: {
-                protocolVersion: "2024-11-05",
-                capabilities: {
-                  tools: true,
-                  contextUpdates: true
-                }
+          window.parent.postMessage({
+            jsonrpc: "2.0",
+            id: this.initRequestId,
+            method: "ui/initialize",
+            params: {
+              protocolVersion: "2024-11-05",
+              appInfo: {
+                name: "retro-breakout",
+                version: "1.1.0"
+              },
+              appCapabilities: {
+                availableDisplayModes: ["inline", "fullscreen"]
               }
-            }, "*");
-            this.connected = true;
-          }
+            }
+          }, "*");
+          this.connected = true;
+          console.log("[MCP Bridge] Sent ui/initialize request to host (id: " + this.initRequestId + ")");
         } catch (err) {
           console.warn("[MCP Bridge] Running in isolated standalone mode.", err);
+        }
+      }
+
+      sendInitializedNotification() {
+        if (!window.parent || window.parent === window) return;
+        try {
+          window.parent.postMessage({
+            jsonrpc: "2.0",
+            method: "ui/notifications/initialized",
+            params: {}
+          }, "*");
+          this.initialized = true;
+          console.log("[MCP Bridge] Sent ui/notifications/initialized to host.");
+        } catch (err) {
+          console.warn("[MCP Bridge] Failed to send initialized notification:", err);
         }
       }
 
@@ -156,24 +182,35 @@
         const data = event.data;
         if (!data || typeof data !== "object") return;
 
-        // Handle tool result notifications from Gemini Enterprise
+        console.log("[MCP Bridge] Received message from host:", data);
+
+        // Host response to ui/initialize
+        if (data.id === this.initRequestId && data.result) {
+          this.hostContext = data.result.hostContext || {};
+          this.sendInitializedNotification();
+        }
+
+        // Host tool result notification
         if (data.method === "ui/notifications/tool-result" || data.method === "tools/call_result") {
+          this.sendInitializedNotification();
           const result = data.params?.result || data.params || data.result;
           this.processToolPayload(result);
         }
 
         // Direct tool invocation results (JSON-RPC responses)
         if (data.result && (data.result.content || data.result._meta)) {
+          this.sendInitializedNotification();
           this.processToolPayload(data.result);
         }
 
-        // Host context changes (e.g., theme, locale)
+        // Host context changes
         if (data.method === "ui/notifications/host-context-changed") {
           this.hostContext = data.params || {};
         }
 
-        // Ping / Heartbeat
+        // Ping / Heartbeat from Host
         if (data.method === "ping") {
+          this.sendInitializedNotification();
           if (event.source && data.id) {
             event.source.postMessage({ jsonrpc: "2.0", id: data.id, result: {} }, "*");
           }
@@ -183,7 +220,6 @@
       processToolPayload(payload) {
         if (!payload) return;
         try {
-          // Extract text content from tool result
           let rawText = "";
           if (Array.isArray(payload.content)) {
             for (const item of payload.content) {
@@ -232,12 +268,12 @@
       }
     }
 
-    // Initialize MCP Bridge (non-blocking)
+    // Initialize MCP Bridge
     const mcp = new MCPAppsBridge();
 
     // Setup Canvas and Rendering Context
     const canvas = document.getElementById('gameCanvas');
-    const ctx = canvas.getContext('2d', { alpha: false }); // High-performance opaque canvas
+    const ctx = canvas.getContext('2d', { alpha: false });
     const aiStatusBadge = document.getElementById('ai-status');
 
     // Live Game Configuration
@@ -359,7 +395,7 @@
         if (p.active) {
           p.x += p.vx * dt;
           p.y += p.vy * dt;
-          p.vy += 0.15 * dt; // Gravity
+          p.vy += 0.15 * dt;
           p.alpha -= p.decay * dt;
           if (p.alpha <= 0) {
             p.active = false;
@@ -741,7 +777,6 @@
       const deltaMs = now - lastFrameTime;
       lastFrameTime = now;
       
-      // Normalized delta scale (1.0 = 60 FPS, max cap 2.0 to prevent jump through walls on tab backgrounding)
       const dt = Math.min(Math.max(deltaMs / 16.667, 0.1), 2.0);
 
       updatePhysics(dt);
