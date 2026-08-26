@@ -17,8 +17,8 @@ sequenceDiagram
     autonumber
     actor User as 👤 Enterprise User
     participant GE as 🧠 Gemini Enterprise Agent<br/>(SPIFFE Agent Identity)
-    participant AGW as 🛡️ Agent Gateway (demo-gateway2)<br/>(AuthzPolicy + Model Armor)
-    participant REG as 📚 Agent Registry<br/>(Central Tool Catalog)
+    participant AGW as 🛡️ Agent Gateway<br/>(AuthzPolicy + Model Armor)
+    participant REG as 📚 MCP Registry<br/>(Central Tool Catalog)
     participant CR as 🔒 Private Cloud Run<br/>(Zero-Trust Ingress)
 
     Note over GE,REG: 1. Dynamic Tool Discovery
@@ -45,25 +45,38 @@ sequenceDiagram
 
 ### The 4 Pillars of GEAP Governance
 
-1. **Central Tool Catalog (Agent Registry):** Single pane of glass for all enterprise MCP servers, OpenAPI tools, and UI extensions.
+1. **Central Tool Catalog (MCP Registry):** Single pane of glass for all enterprise MCP servers, OpenAPI tools, and UI extensions.
 2. **Cryptographic Zero-Trust Ingress (Private Cloud Run):** Workloads are completely private (`--no-allow-unauthenticated`), strictly accepting Google OIDC tokens from authorized Service Agents.
 3. **Egress Governance & Inspection (Agent Gateway + Model Armor):** Evaluates SPIFFE agent identities over mTLS and sanitizes payloads in-flight before tools execute.
 4. **Zero-CDN Secure UI Delivery (MCP Apps Protocol):** Delivers full interactive HTML5/JS applications directly through the authenticated MCP channel (`resources/read`), running inside sandboxed iframes with origin-locked postMessage bridges.
 
 ---
 
-## 📋 Prerequisites & Environment Setup
+## ⚠️ Critical Requirement: Regional Co-Location & Auto-Discovery
 
-Ensure you have the required Google Cloud SDK components, project access, and environment variables defined:
+> [!IMPORTANT]
+> For Gemini Enterprise to automatically discover MCP Apps registered in the **MCP Registry** and route calls through **Agent Gateway**, **all three components MUST reside in the same Google Cloud region** (e.g. `us-central1`):
+> 
+> 1. **MCP Registry Location:** `us-central1`
+> 2. **Agent Gateway Location:** `us-central1`
+> 3. **Gemini Enterprise Agent & Data Store:** `us-central1`
+> 
+> *If regions mismatch (e.g., your Agent Gateway is created in `us-central1` but your Gemini Enterprise Agent / Data Store is created in `global` or `europe-west1`), auto-discovery and private PSC mTLS routing will fail, and the MCP server will not populate in the catalog picker.*
+
+---
+
+## 📋 Prerequisites & Environment Variables
+
+Define your project variables:
 
 ```bash
 export PROJECT_ID="<YOUR_PROJECT_ID>"
 export REGION="us-central1"
 export SERVICE_NAME="mcp-breakout-arcade"
-export GATEWAY_NAME="demo-gateway2"
+export GATEWAY_NAME="<YOUR_AGENT_GATEWAY_NAME>"   # e.g. "my-agent-gateway"
 export SERVICE_ID="retro-breakout-service"
 
-# Retrieve project number
+# Retrieve numeric project ID
 export PROJECT_NUMBER=$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)')
 ```
 
@@ -94,7 +107,7 @@ gcloud run deploy $SERVICE_NAME \
   --port 8080
 ```
 
-Capture the deployed service URL:
+Capture the deployed private service URL:
 ```bash
 export CLOUD_RUN_URL=$(gcloud run services describe $SERVICE_NAME \
   --platform managed \
@@ -135,15 +148,15 @@ gcloud run services add-iam-policy-binding $SERVICE_NAME \
 
 ---
 
-## 📚 Step 3: Grant Agent Registry & Gateway Permissions
+## 📚 Step 3: Grant MCP Registry & Gateway Permissions
 
-Create a custom IAM role to allow Discovery Engine to browse the Agent Registry catalog and route through the Agent Gateway:
+Create a custom IAM role to allow Discovery Engine to browse the MCP Registry catalog and route through your Agent Gateway:
 
 ```bash
 gcloud iam roles create geAgentRegistryViewer \
   --project=$PROJECT_ID \
   --title="Gemini Enterprise Agent Registry Viewer" \
-  --description="Allows Discovery Engine to discover services in Agent Registry and use Agent Gateways" \
+  --description="Allows Discovery Engine to discover services in MCP Registry and use Agent Gateways" \
   --permissions="agentregistry.agents.list,agentregistry.agents.get,agentregistry.agents.search,agentregistry.mcpServers.list,agentregistry.mcpServers.get,agentregistry.mcpServers.search,networkservices.agentGateways.list,networkservices.agentGateways.get,networkservices.agentGateways.use"
 
 gcloud projects add-iam-policy-binding $PROJECT_ID \
@@ -153,9 +166,11 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
 
 ---
 
-## 📑 Step 4: Register Service in Agent Registry
+## 📑 Step 4: Register the App in MCP Registry
 
-Register the MCP service interface and tool specification into the Google Cloud Agent Registry:
+In the Google Cloud Console, the catalog is called **MCP Registry** (located under **Agent Builder &rarr; MCP Registry**). 
+
+You can publish your tool specification (`toolspec.json`) via CLI:
 
 ```bash
 SPEC_CONTENT=$(cat toolspec.json)
@@ -163,26 +178,23 @@ SPEC_CONTENT=$(cat toolspec.json)
 gcloud agent-registry services create $SERVICE_ID \
   --project=$PROJECT_ID \
   --location=$REGION \
-  --display-name="Retro Breakout Arcade MCP App" \
-  --description="Interactive Atari Breakout arcade game with real-time physics controls and UI extension" \
+  --display-name="Breakout MCP" \
+  --description="Interactive MCP Apps Breakout arcade game with inline HTML/canvas UI rendering, live gameplay parameter controls, and cheat code integrations for Gemini Enterprise." \
   --interfaces="[{\"protocolBinding\": \"JSONRPC\", \"url\": \"${CLOUD_RUN_URL}/mcp\"}]" \
   --mcp-server-spec-type=tool-spec \
   --mcp-server-spec-content="$SPEC_CONTENT"
 ```
 
-*(Note: If updating an existing service, use `gcloud agent-registry services update` instead).*
+*(Note: If updating an existing registration, use `gcloud agent-registry services update` instead).*
 
 ---
 
-## 🛡️ Step 5: Configure Agent Gateway (`demo-gateway2`)
+## 🛡️ Step 5: Create & Configure a New Agent Gateway
 
-Agent Gateway governs all tool invocations made by Gemini Enterprise:
+Create a dedicated **Agent Gateway** to govern and audit all tool invocations made by Gemini Enterprise:
 
-### 1. Verify / Create the Agent Gateway
+### 1. Create the Agent Gateway in the same region
 ```bash
-gcloud network-services agent-gateways describe $GATEWAY_NAME \
-  --location=$REGION \
-  --project=$PROJECT_ID 2>/dev/null || \
 gcloud network-services agent-gateways create $GATEWAY_NAME \
   --location=$REGION \
   --project=$PROJECT_ID
@@ -199,22 +211,25 @@ Enable payload sanitization on the Gateway to inspect and validate all tool para
 
 ---
 
-## 🖥️ Step 6: Connect in Gemini Enterprise Console
+## 🖥️ Step 6: Connect the Gateway to Gemini Enterprise
 
 1. Open **Google Cloud Console** &rarr; **Agent Builder (Discovery Engine)** &rarr; **Data Stores**.
 2. Click **Create Data Store**.
-3. Select **Agent Gateway / Agent Registry** (or **Custom MCP Server**):
-   - **Data Store Name:** `mcp-breakout-arcade`
+3. Select **Agent Gateway / MCP Registry**:
+   - **Auto-Discovery:** Because your Registry, Gateway, and Data Store are co-located in `$REGION`, your registered **`Breakout MCP`** service will automatically appear in the list.
+4. Select the service and configure authentication:
+   - **Authentication Method:** `OAuth 2.0`
    - **MCP Server URL:** `${CLOUD_RUN_URL}/mcp`
-   - **Authorization Endpoint:** `${CLOUD_RUN_URL}/authorize`
-   - **Token Endpoint:** `${CLOUD_RUN_URL}/token`
-   - **Authentication Type:** `OAuth 2.0 (PKCE)` with `S256`
+   - **Authorization URL:** `${CLOUD_RUN_URL}/authorize`
+   - **Token URL:** `${CLOUD_RUN_URL}/token`
    - **Client ID:** `gemini-enterprise-agent`
-4. Click **Create & Connect**.
-5. Navigate to your **Gemini Enterprise Agent** &rarr; **Actions** tab:
-   - Click **Add Action** and attach the `mcp-breakout-arcade` data store.
+   - **Client Secret:** `secret123` (or any string)
+   - **Enable PKCE Support:** ☑️ **Checked** (`S256`)
+5. Click **Verify Auth** &rarr; **Create & Connect**.
+6. Navigate to your **Gemini Enterprise Agent** &rarr; **Actions** tab:
+   - Click **Add Action** and attach your new `mcp-breakout-arcade` data store.
    - Click **Reload custom actions** to verify all 7 tools (`launch_breakout`, `update_game_settings`, `trigger_game_cheat`, etc.) are recognized.
-6. Publish / Save the Agent configuration.
+7. Publish / Save the Agent configuration.
 
 ---
 
@@ -253,9 +268,10 @@ gcloud logging read "resource.type=network_services_gateway AND log_name:agent_g
 ### Common Issues & Solutions
 | Issue | Root Cause | Resolution |
 | :--- | :--- | :--- |
+| **MCP App not appearing in Console picker** | Regional mismatch between MCP Registry, Gateway, and Agent Builder. | Verify all three are deployed in the **exact same region** (e.g. `us-central1`). |
 | **`403 Forbidden` on `/mcp`** | Missing `roles/run.invoker` on Cloud Run. | Run Step 2 to re-bind Discovery Engine & Agent Gateway Service Accounts. |
 | **`401 Unauthorized` on OAuth** | PKCE verifier mismatch or expired authorization code. | Ensure `PKCE S256` is enabled in Data Store configuration. Codes expire in 5 minutes. |
-| **Tool listed but UI doesn't render** | Missing `_meta.ui.resourceUri` in tool spec. | Re-sync `toolspec.json` in Agent Registry (Step 4). |
+| **Tool listed but UI doesn't render** | Missing `_meta.ui.resourceUri` in tool spec. | Re-sync `toolspec.json` in MCP Registry (Step 4). |
 | **Iframe postMessage Warning** | Origin spoofing or unverified parent domain. | Ensure parent origin matches your enterprise domain. The bridge locks origin on first handshake. |
 
 ---
@@ -263,5 +279,5 @@ gcloud logging read "resource.type=network_services_gateway AND log_name:agent_g
 ## 📄 References & Related Documentation
 * [Model Context Protocol (MCP) Specification](https://modelcontextprotocol.io/)
 * [MCP Apps Specification (Ext-Apps)](https://github.com/modelcontextprotocol/ext-apps)
-* [Google Cloud Agent Registry Documentation](https://cloud.google.com/gemini/docs/enterprise)
+* [Google Cloud MCP Registry Documentation](https://cloud.google.com/gemini/docs/enterprise)
 * [Google Cloud Agent Gateway Documentation](https://cloud.google.com/network-services/docs)

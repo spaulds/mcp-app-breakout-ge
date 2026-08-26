@@ -16,8 +16,8 @@ sequenceDiagram
     autonumber
     actor User as 👤 Employee (Gemini Enterprise)
     participant GE as 🧠 Gemini Enterprise Agent<br/>(SPIFFE Identity)
-    participant AGW as 🛡️ Agent Gateway (demo-gateway2)<br/>(AuthzPolicy + Model Armor)
-    participant REG as 📚 Agent Registry<br/>(Tool Catalog)
+    participant AGW as 🛡️ Agent Gateway<br/>(AuthzPolicy + Model Armor)
+    participant REG as 📚 MCP Registry<br/>(Tool Catalog)
     participant CR as 🔒 Private Cloud Run<br/>(roles/run.invoker Only)
 
     Note over GE,REG: 1. Zero-Plumbing Discovery
@@ -41,7 +41,7 @@ sequenceDiagram
     GE->>User: Renders Interactive Canvas in Chat!
 ```
 
-### 1. Centralized Catalog via Agent Registry
+### 1. Centralized Catalog via MCP Registry
 Eliminates brittle webhooks and connector sprawl. Services publish schemas, interfaces, and `_meta.ui` tags centrally so agents discover tools dynamically.
 
 ### 2. Zero-Trust Ingress & Private Workloads
@@ -79,7 +79,10 @@ Includes a built-in, zero-dependency OAuth 2.0 authorization server (RFC 6749 & 
 
 ## 🚀 Deployment & Enterprise Setup
 
-* **Full Step-by-Step Enterprise Guide:** See [docs/GEAP_ENTERPRISE_SETUP.md](docs/GEAP_ENTERPRISE_SETUP.md) for complete end-to-end instructions covering Agent Registry, Agent Gateway (`demo-gateway2`), AuthzPolicy, Model Armor, custom IAM roles, and Discovery Engine Data Store wiring.
+* **Full Step-by-Step Enterprise Guide:** See [docs/GEAP_ENTERPRISE_SETUP.md](docs/GEAP_ENTERPRISE_SETUP.md) for complete instructions covering **MCP Registry** publishing, **Agent Gateway** creation, `AuthzPolicy`, Model Armor, custom IAM roles, regional co-location rules, and Gemini Enterprise Data Store wiring.
+
+> [!NOTE]
+> **Regional Co-Location Requirement:** Your **MCP Registry**, **Agent Gateway**, and **Gemini Enterprise Agent/Data Store** must all be provisioned in the **same region** (e.g. `us-central1`) for automatic tool discovery and private mTLS routing to function.
 
 ### Quick Start (Google Cloud Run)
 ```bash
