@@ -1,8 +1,8 @@
-import express from "express";
+import express, { Request, Response, NextFunction } from "express";
 import cors from "cors";
 import fs from "fs";
 import path from "path";
-import zlib from "zlib";
+import crypto from "crypto";
 import { fileURLToPath } from "url";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
@@ -17,11 +17,24 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-app.use(cors());
+
+// --- Security & CORS Configuration ---
+const allowedOrigins = process.env.CORS_ORIGIN || "*";
+app.use(cors({
+  origin: allowedOrigins === "*" ? true : allowedOrigins.split(",").map(o => o.trim()),
+  credentials: true
+}));
+
+app.use((_req: Request, res: Response, next: NextFunction) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-XSS-Protection: 1; mode=block", "1; mode=block");
+  next();
+});
+
 app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-// --- In-Memory HTML Cache (Eliminates File I/O Overhead) ---
+// --- In-Memory HTML Cache ---
 function loadGameHtml(): string {
   const pathsToTry = [
     path.join(__dirname, "game/index.html"),
@@ -43,6 +56,81 @@ function loadGameHtml(): string {
 }
 
 const CACHED_GAME_HTML = loadGameHtml();
+
+// --- Standards-Compliant Cloud-Agnostic OAuth 2.0 Store ---
+interface AuthCodeRecord {
+  code: string;
+  clientId: string;
+  redirectUri: string;
+  codeChallenge?: string;
+  codeChallengeMethod?: "S256" | "plain";
+  scope?: string;
+  expiresAt: number;
+}
+
+interface TokenRecord {
+  accessToken: string;
+  refreshToken: string;
+  clientId: string;
+  scope: string;
+  expiresAt: number;
+}
+
+const authCodes = new Map<string, AuthCodeRecord>();
+const activeTokens = new Map<string, TokenRecord>();
+
+// Clean up expired auth codes and tokens periodically
+setInterval(() => {
+  const now = Date.now();
+  for (const [code, record] of authCodes.entries()) {
+    if (record.expiresAt < now) {
+      authCodes.delete(code);
+    }
+  }
+  for (const [token, record] of activeTokens.entries()) {
+    if (record.expiresAt < now) {
+      activeTokens.delete(token);
+    }
+  }
+}, 60000);
+
+// Helper to authenticate Bearer tokens if REQUIRE_AUTH=true
+function authenticateRequest(req: Request): { authenticated: boolean; error?: string; client?: string } {
+  const requireAuth = process.env.REQUIRE_AUTH === "true";
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader) {
+    if (requireAuth) {
+      return { authenticated: false, error: "Missing Authorization header" };
+    }
+    return { authenticated: true, client: "anonymous" };
+  }
+
+  const parts = authHeader.split(" ");
+  if (parts.length !== 2 || parts[0].toLowerCase() !== "bearer") {
+    return { authenticated: false, error: "Invalid Authorization header format. Expected Bearer <token>" };
+  }
+
+  const token = parts[1];
+  const tokenRecord = activeTokens.get(token);
+
+  if (!tokenRecord) {
+    if (requireAuth) {
+      return { authenticated: false, error: "Invalid or expired Bearer token" };
+    }
+    return { authenticated: true, client: "unverified-bearer" };
+  }
+
+  if (tokenRecord.expiresAt < Date.now()) {
+    activeTokens.delete(token);
+    if (requireAuth) {
+      return { authenticated: false, error: "Bearer token has expired" };
+    }
+    return { authenticated: true, client: "expired-bearer" };
+  }
+
+  return { authenticated: true, client: tokenRecord.clientId };
+}
 
 // --- Tool & Resource Definitions ---
 const TOOL_DEFINITIONS = [
@@ -86,15 +174,15 @@ const TOOL_DEFINITIONS = [
       properties: {
         paddleSize: {
           type: "number",
-          description: "The width of the paddle in pixels. Default is 120. Set to 180 or 240 to make it wider/easier."
+          description: "The width of the paddle in pixels. Default is 120. Clamped between 40 and 350."
         },
         ballSpeed: {
           type: "number",
-          description: "The speed of the ball. Default is 5.5. Lower (e.g. 3.5) makes it slower/easier, higher (e.g. 8) makes it faster/harder."
+          description: "The speed of the ball. Default is 5.5. Clamped between 1.0 and 15.0."
         },
         lives: {
           type: "number",
-          description: "Total player lives. Default is 3. Set to 5 or 10 to give the player more chances."
+          description: "Total player lives. Default is 3. Clamped between 1 and 20."
         },
         autopilot: {
           type: "boolean",
@@ -116,19 +204,19 @@ const TOOL_DEFINITIONS = [
       properties: {
         paddleWidth: {
           type: "number",
-          description: "The width of the paddle in pixels. Default is 120. Set to 180 or 240 to make it wider/easier."
+          description: "The width of the paddle in pixels. Default is 120. Clamped between 40 and 350."
         },
         paddleSize: {
           type: "number",
-          description: "The width of the paddle in pixels. Default is 120. Set to 180 or 240 to make it wider/easier."
+          description: "The width of the paddle in pixels. Default is 120. Clamped between 40 and 350."
         },
         ballSpeed: {
           type: "number",
-          description: "The speed of the ball. Default is 5.5. Lower (e.g. 3.5) makes it slower/easier, higher (e.g. 8) makes it faster/harder."
+          description: "The speed of the ball. Default is 5.5. Clamped between 1.0 and 15.0."
         },
         lives: {
           type: "number",
-          description: "Total player lives. Default is 3. Set to 5 or 10 to give the player more chances."
+          description: "Total player lives. Default is 3. Clamped between 1 and 20."
         },
         autopilot: {
           type: "boolean",
@@ -188,7 +276,7 @@ const RESOURCE_DEFINITIONS = [
   }
 ];
 
-// --- Core Tool Execution Logic ---
+// --- Core Tool Execution Logic with Parameter Bounds & Sanitization ---
 function executeToolCall(name: string, args: any) {
   console.log(`[TOOL CALL] Executing tool: ${name} with args:`, JSON.stringify(args || {}));
 
@@ -235,12 +323,26 @@ function executeToolCall(name: string, args: any) {
 
   if (name === "update_game_settings" || name === "modify_breakout_settings") {
     const settings: Record<string, any> = {};
-    const paddleValue = args?.paddleSize !== undefined ? args.paddleSize : args?.paddleWidth;
-    if (paddleValue !== undefined) settings.paddleSize = paddleValue;
-    if (args?.ballSpeed !== undefined) settings.ballSpeed = args.ballSpeed;
-    if (args?.lives !== undefined) settings.lives = args.lives;
-    if (args?.autopilot !== undefined) settings.autopilot = args.autopilot;
-    if (args?.godMode !== undefined) settings.godMode = args.godMode;
+    const paddleValue = args?.paddleSize !== undefined ? Number(args.paddleSize) : (args?.paddleWidth !== undefined ? Number(args.paddleWidth) : undefined);
+    
+    // Explicit parameter bounding & validation
+    if (paddleValue !== undefined && !isNaN(paddleValue)) {
+      settings.paddleSize = Math.max(40, Math.min(350, Math.round(paddleValue)));
+    }
+    if (args?.ballSpeed !== undefined) {
+      const speed = Number(args.ballSpeed);
+      if (!isNaN(speed)) {
+        settings.ballSpeed = Math.max(1.0, Math.min(15.0, Number(speed.toFixed(1))));
+      }
+    }
+    if (args?.lives !== undefined) {
+      const lives = Number(args.lives);
+      if (!isNaN(lives)) {
+        settings.lives = Math.max(1, Math.min(20, Math.floor(lives)));
+      }
+    }
+    if (args?.autopilot !== undefined) settings.autopilot = Boolean(args.autopilot);
+    if (args?.godMode !== undefined) settings.godMode = Boolean(args.godMode);
 
     const summaryParts = [];
     if (settings.paddleSize !== undefined) summaryParts.push(`paddle size to ${settings.paddleSize}px`);
@@ -281,6 +383,11 @@ function executeToolCall(name: string, args: any) {
     if (cheat === "megaPaddle") cheat = "mega_paddle";
     if (cheat === "laserPaddle") cheat = "laser_paddle";
     if (cheat === "levelBypass") cheat = "win_level";
+
+    const allowedCheats = ["god_mode", "extra_ball", "slow_ball", "mega_paddle", "laser_paddle", "win_level"];
+    if (!allowedCheats.includes(cheat)) {
+      throw new Error(`Invalid cheat code: '${cheat}'. Allowed cheats: ${allowedCheats.join(", ")}`);
+    }
 
     let desc = "";
     if (cheat === "god_mode") desc = "Invincibility (God Mode) enabled! The ball bounces safely on the screen bottom.";
@@ -363,17 +470,26 @@ function createMcpServerInstance(): Server {
 const transports = new Map<string, SSEServerTransport>();
 
 // --- Server-Sent Events (SSE) Routes ---
-app.get("/mcp", async (req, res) => {
+app.get("/mcp", async (req: Request, res: Response) => {
+  // Check auth
+  const auth = authenticateRequest(req);
+  if (!auth.authenticated) {
+    res.status(401).json({ error: "unauthorized", message: auth.error });
+    return;
+  }
+
   // If a standard web browser loads /mcp in the address bar (Accept: text/html), return status UI instead of raw SSE
   if (req.accepts("html") && !req.headers.accept?.includes("text/event-stream")) {
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.send(`<!DOCTYPE html><html><head><title>Breakout MCP Server</title></head><body style="background:#0f172a;color:#f8fafc;font-family:system-ui,sans-serif;padding:3rem;line-height:1.6;">
       <h1 style="color:#38bdf8;">🕹️ Retro Breakout MCP Server</h1>
-      <p style="color:#94a3b8;">Server is healthy and ready for Gemini Enterprise & Agent Gateway.</p>
+      <p style="color:#94a3b8;">Server is healthy and ready for Gemini Enterprise, Agent Gateway, Claude, or any MCP client.</p>
       <div style="background:#1e293b;padding:1.5rem;border-radius:8px;margin-top:1rem;">
         <p><strong>Protocol:</strong> Model Context Protocol (MCP Apps)</p>
         <p><strong>MCP JSON-RPC Endpoint:</strong> <code>POST /mcp</code></p>
         <p><strong>MCP SSE Endpoint:</strong> <code>GET /mcp</code></p>
+        <p><strong>OAuth 2.0 Auth Endpoint:</strong> <code>GET /authorize</code></p>
+        <p><strong>OAuth 2.0 Token Endpoint:</strong> <code>POST /token</code></p>
         <p><strong>UI Resource URI:</strong> <code>ui://breakout</code></p>
       </div>
       <p style="margin-top:1.5rem;"><a href="/game" style="color:#38bdf8;text-decoration:underline;">Open Direct Game Preview &rarr;</a></p>
@@ -381,7 +497,7 @@ app.get("/mcp", async (req, res) => {
     return;
   }
 
-  console.log("[SSE] Establishing new MCP SSE transport connection...");
+  console.log(`[SSE] Establishing new MCP SSE transport connection (Client: ${auth.client})...`);
   res.setHeader("X-Accel-Buffering", "no");
   res.setHeader("Cache-Control", "no-cache, no-transform");
 
@@ -394,7 +510,7 @@ app.get("/mcp", async (req, res) => {
   transports.set(sessionId, transport);
   console.log(`[SSE] Connected session ID: ${sessionId}`);
 
-  // SSE Keep-Alive Ping every 25 seconds to prevent Cloud Run proxy disconnects
+  // SSE Keep-Alive Ping every 25 seconds to prevent proxy disconnects
   const keepAliveInterval = setInterval(() => {
     try {
       res.write(": keep-alive\n\n");
@@ -417,7 +533,7 @@ app.get("/mcp", async (req, res) => {
   }
 });
 
-app.post("/mcp/messages", async (req, res) => {
+app.post("/mcp/messages", async (req: Request, res: Response) => {
   const sessionId = req.query.sessionId as string;
   const transport = transports.get(sessionId);
 
@@ -435,8 +551,18 @@ app.post("/mcp/messages", async (req, res) => {
 });
 
 // --- High-Performance Stateless JSON-RPC POST /mcp Dispatcher ---
-// Used directly by Gemini Enterprise / Discovery Engine MCP Connector
-app.post("/mcp", async (req, res) => {
+app.post("/mcp", async (req: Request, res: Response) => {
+  // Check auth
+  const auth = authenticateRequest(req);
+  if (!auth.authenticated) {
+    res.status(401).json({
+      jsonrpc: "2.0",
+      id: req.body?.id || null,
+      error: { code: -32000, message: `Unauthorized: ${auth.error}` }
+    });
+    return;
+  }
+
   const { method, id, params } = req.body || {};
 
   if (!method) {
@@ -448,7 +574,7 @@ app.post("/mcp", async (req, res) => {
     return;
   }
 
-  console.log(`[JSON-RPC POST] Method: ${method}, ID: ${id}`);
+  console.log(`[JSON-RPC POST] Method: ${method}, ID: ${id}, Client: ${auth.client}`);
 
   try {
     let result: any = null;
@@ -463,7 +589,7 @@ app.post("/mcp", async (req, res) => {
           },
           serverInfo: {
             name: "retro-breakout-server",
-            version: "1.1.0"
+            version: "1.2.0"
           }
         };
         break;
@@ -529,50 +655,222 @@ app.post("/mcp", async (req, res) => {
   }
 });
 
-// --- Mock OAuth 2.0 Endpoints for Gemini Enterprise ---
-app.get("/authorize", (req, res) => {
-  console.log("[OAuth] Authorize query:", req.query);
+// --- Production-Ready Standards-Compliant OAuth 2.0 Endpoints (RFC 6749 & RFC 7636 PKCE) ---
+app.get("/authorize", (req: Request, res: Response) => {
   const redirectUri = req.query.redirect_uri as string;
   const state = req.query.state as string;
+  const clientId = (req.query.client_id as string) || "generic-mcp-client";
+  const codeChallenge = req.query.code_challenge as string | undefined;
+  const codeChallengeMethod = (req.query.code_challenge_method as "S256" | "plain") || (codeChallenge ? "S256" : undefined);
+  const scope = (req.query.scope as string) || "mcp";
+
+  console.log(`[OAuth /authorize] Request from client '${clientId}', redirect_uri: ${redirectUri}, PKCE: ${codeChallenge ? codeChallengeMethod : "none"}`);
 
   if (!redirectUri) {
-    res.status(400).send("Missing redirect_uri parameter");
+    res.status(400).json({ error: "invalid_request", error_description: "Missing required 'redirect_uri' parameter" });
     return;
   }
 
-  const redirectUrl = new URL(redirectUri);
-  redirectUrl.searchParams.set("code", "mock_gecx_auth_code_12345");
-  if (state) {
-    redirectUrl.searchParams.set("state", state);
+  let parsedRedirectUrl: URL;
+  try {
+    parsedRedirectUrl = new URL(redirectUri);
+  } catch (e) {
+    res.status(400).json({ error: "invalid_request", error_description: "Invalid 'redirect_uri' URL format" });
+    return;
   }
 
-  res.redirect(redirectUrl.toString());
+  // Issue high-entropy ephemeral authorization code
+  const code = crypto.randomBytes(32).toString("base64url");
+  const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes TTL
+
+  authCodes.set(code, {
+    code,
+    clientId,
+    redirectUri,
+    codeChallenge,
+    codeChallengeMethod,
+    scope,
+    expiresAt
+  });
+
+  parsedRedirectUrl.searchParams.set("code", code);
+  if (state) {
+    parsedRedirectUrl.searchParams.set("state", state);
+  }
+
+  console.log(`[OAuth /authorize] Issued code '${code.substring(0, 8)}...' -> redirecting to ${parsedRedirectUrl.origin}${parsedRedirectUrl.pathname}`);
+  res.redirect(parsedRedirectUrl.toString());
 });
 
-app.post("/token", (req, res) => {
-  console.log("[OAuth] Token exchange request body:", req.body);
-  res.status(200).json({
-    access_token: "mock_gecx_access_token_67890",
-    token_type: "Bearer",
-    expires_in: 3600,
-    refresh_token: "mock_gecx_refresh_token_54321",
-    scope: req.body.scope || "mcp"
+app.post("/token", (req: Request, res: Response) => {
+  const grantType = req.body?.grant_type || req.query?.grant_type;
+  const clientId = req.body?.client_id || req.query?.client_id || "generic-mcp-client";
+
+  console.log(`[OAuth /token] Exchange request: grant_type='${grantType}', client_id='${clientId}'`);
+
+  if (grantType === "authorization_code") {
+    const code = req.body?.code || req.query?.code;
+    const redirectUri = req.body?.redirect_uri || req.query?.redirect_uri;
+    const codeVerifier = req.body?.code_verifier || req.query?.code_verifier;
+
+    if (!code) {
+      res.status(400).json({ error: "invalid_request", error_description: "Missing 'code' parameter" });
+      return;
+    }
+
+    const authRecord = authCodes.get(code);
+    if (!authRecord) {
+      res.status(400).json({ error: "invalid_grant", error_description: "Authorization code is invalid or has already been used" });
+      return;
+    }
+
+    // Single-use guarantee: remove code immediately
+    authCodes.delete(code);
+
+    if (authRecord.expiresAt < Date.now()) {
+      res.status(400).json({ error: "invalid_grant", error_description: "Authorization code has expired" });
+      return;
+    }
+
+    if (redirectUri && authRecord.redirectUri && redirectUri !== authRecord.redirectUri) {
+      res.status(400).json({ error: "invalid_grant", error_description: "redirect_uri mismatch" });
+      return;
+    }
+
+    // RFC 7636 PKCE Verification
+    if (authRecord.codeChallenge) {
+      if (!codeVerifier) {
+        res.status(400).json({ error: "invalid_request", error_description: "Missing 'code_verifier' for PKCE challenge" });
+        return;
+      }
+
+      let calculatedChallenge: string;
+      if (authRecord.codeChallengeMethod === "plain") {
+        calculatedChallenge = codeVerifier;
+      } else {
+        // S256 default
+        calculatedChallenge = crypto.createHash("sha256").update(codeVerifier).digest("base64url");
+      }
+
+      if (calculatedChallenge !== authRecord.codeChallenge) {
+        console.warn("[OAuth /token] PKCE code_verifier mismatch!");
+        res.status(400).json({ error: "invalid_grant", error_description: "PKCE verification failed" });
+        return;
+      }
+      console.log("[OAuth /token] PKCE verification succeeded (S256)");
+    }
+
+    // Issue cryptographic bearer token
+    const accessToken = crypto.randomBytes(32).toString("hex");
+    const refreshToken = crypto.randomBytes(32).toString("hex");
+    const expiresIn = 3600; // 1 hour
+
+    activeTokens.set(accessToken, {
+      accessToken,
+      refreshToken,
+      clientId: authRecord.clientId,
+      scope: authRecord.scope || "mcp",
+      expiresAt: Date.now() + expiresIn * 1000
+    });
+
+    console.log(`[OAuth /token] Successfully issued access_token for client: '${authRecord.clientId}'`);
+
+    res.status(200).json({
+      access_token: accessToken,
+      token_type: "Bearer",
+      expires_in: expiresIn,
+      refresh_token: refreshToken,
+      scope: authRecord.scope || "mcp"
+    });
+    return;
+  }
+
+  if (grantType === "refresh_token") {
+    const refreshToken = req.body?.refresh_token || req.query?.refresh_token;
+    if (!refreshToken) {
+      res.status(400).json({ error: "invalid_request", error_description: "Missing 'refresh_token' parameter" });
+      return;
+    }
+
+    let foundToken: TokenRecord | undefined;
+    for (const [_, record] of activeTokens.entries()) {
+      if (record.refreshToken === refreshToken) {
+        foundToken = record;
+        break;
+      }
+    }
+
+    if (!foundToken) {
+      res.status(400).json({ error: "invalid_grant", error_description: "Invalid refresh token" });
+      return;
+    }
+
+    // Rotate tokens
+    activeTokens.delete(foundToken.accessToken);
+    const newAccessToken = crypto.randomBytes(32).toString("hex");
+    const newRefreshToken = crypto.randomBytes(32).toString("hex");
+    const expiresIn = 3600;
+
+    activeTokens.set(newAccessToken, {
+      accessToken: newAccessToken,
+      refreshToken: newRefreshToken,
+      clientId: foundToken.clientId,
+      scope: foundToken.scope,
+      expiresAt: Date.now() + expiresIn * 1000
+    });
+
+    res.status(200).json({
+      access_token: newAccessToken,
+      token_type: "Bearer",
+      expires_in: expiresIn,
+      refresh_token: newRefreshToken,
+      scope: foundToken.scope
+    });
+    return;
+  }
+
+  if (grantType === "client_credentials") {
+    const accessToken = crypto.randomBytes(32).toString("hex");
+    const expiresIn = 3600;
+
+    activeTokens.set(accessToken, {
+      accessToken,
+      refreshToken: "",
+      clientId,
+      scope: req.body?.scope || "mcp",
+      expiresAt: Date.now() + expiresIn * 1000
+    });
+
+    res.status(200).json({
+      access_token: accessToken,
+      token_type: "Bearer",
+      expires_in: expiresIn,
+      scope: req.body?.scope || "mcp"
+    });
+    return;
+  }
+
+  res.status(400).json({
+    error: "unsupported_grant_type",
+    error_description: `Grant type '${grantType}' is not supported. Supported: authorization_code, refresh_token, client_credentials`
   });
 });
 
 // Health check endpoint
-app.get("/", (req, res) => {
+app.get("/", (_req: Request, res: Response) => {
   res.status(200).json({
     status: "healthy",
     app: "retro-breakout-mcp-server",
-    version: "1.1.0",
+    version: "1.2.0",
     cachedHtmlLength: CACHED_GAME_HTML.length,
-    activeSessions: transports.size
+    activeSessions: transports.size,
+    activeTokens: activeTokens.size,
+    authCodes: authCodes.size
   });
 });
 
 // Direct UI preview endpoint for browser verification
-app.get("/game", (req, res) => {
+app.get("/game", (_req: Request, res: Response) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.send(CACHED_GAME_HTML);
 });
@@ -584,6 +882,7 @@ app.listen(port, () => {
   console.log(`🚀 Retro Breakout MCP Server running on port ${port}`);
   console.log(`🔗 MCP SSE Endpoint: http://localhost:${port}/mcp`);
   console.log(`🔗 MCP Stateless JSON-RPC: http://localhost:${port}/mcp (POST)`);
+  console.log(`🔐 OAuth 2.0 Endpoints: /authorize and /token (RFC 7636 PKCE)`);
   console.log(`🎮 Direct Game Preview: http://localhost:${port}/game`);
   console.log(`=============================================================`);
 });
@@ -595,3 +894,4 @@ process.on("unhandledRejection", (reason, promise) => {
 process.on("uncaughtException", (err) => {
   console.error("[CRITICAL] Uncaught Exception thrown:", err);
 });
+

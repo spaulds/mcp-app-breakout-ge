@@ -325,7 +325,7 @@
 
   <script>
     /**
-     * Complete, Spec-Compliant MCP Apps Protocol Bridge with Session Continuity
+     * Complete, Spec-Compliant MCP Apps Protocol Bridge with Origin Security & Continuity
      */
     class MCPAppsBridge {
       constructor() {
@@ -333,6 +333,7 @@
         this.initialized = false;
         this.initRequestId = 1;
         this.hostContext = {};
+        this.hostOrigin = null;
         this.ontoolresult = null;
 
         window.addEventListener("message", (event) => {
@@ -345,42 +346,53 @@
         setTimeout(() => this.sendInitializedNotification(), 250);
       }
 
-      sendInitialize() {
+      sendToHost(message) {
         if (!window.parent || window.parent === window) return;
         try {
-          window.parent.postMessage({
-            jsonrpc: "2.0",
-            id: this.initRequestId,
-            method: "ui/initialize",
-            params: {
-              protocolVersion: "2024-11-05",
-              appInfo: { name: "retro-breakout", version: "1.2.0" },
-              appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] }
-            }
-          }, "*");
-          this.connected = true;
+          const target = this.hostOrigin && this.hostOrigin !== "null" ? this.hostOrigin : "*";
+          window.parent.postMessage(message, target);
         } catch (err) {
-          console.warn("[MCP Bridge] Running in isolated mode.", err);
+          console.warn("[MCP Bridge] postMessage dispatch failed:", err);
         }
       }
 
+      sendInitialize() {
+        this.sendToHost({
+          jsonrpc: "2.0",
+          id: this.initRequestId,
+          method: "ui/initialize",
+          params: {
+            protocolVersion: "2024-11-05",
+            appInfo: { name: "retro-breakout", version: "1.2.0" },
+            appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] }
+          }
+        });
+        this.connected = true;
+      }
+
       sendInitializedNotification() {
-        if (!window.parent || window.parent === window) return;
-        try {
-          window.parent.postMessage({
-            jsonrpc: "2.0",
-            method: "ui/notifications/initialized",
-            params: {}
-          }, "*");
-          this.initialized = true;
-        } catch (err) {
-          console.warn("[MCP Bridge] Failed to send initialized notification:", err);
-        }
+        this.sendToHost({
+          jsonrpc: "2.0",
+          method: "ui/notifications/initialized",
+          params: {}
+        });
+        this.initialized = true;
       }
 
       handleIncomingMessage(event) {
         const data = event.data;
         if (!data || typeof data !== "object") return;
+
+        // Securely capture and lock host origin on first legitimate message
+        if (event.origin && event.origin !== "null" && !this.hostOrigin) {
+          this.hostOrigin = event.origin;
+        }
+
+        // Validate origin if locked
+        if (this.hostOrigin && event.origin && event.origin !== "null" && event.origin !== this.hostOrigin) {
+          console.warn("[MCP Bridge] Rejected message from unverified origin:", event.origin);
+          return;
+        }
 
         if (data.id === this.initRequestId && data.result) {
           this.hostContext = data.result.hostContext || {};
@@ -404,7 +416,7 @@
 
         if (data.method === "ping" && event.source && data.id) {
           this.sendInitializedNotification();
-          event.source.postMessage({ jsonrpc: "2.0", id: data.id, result: {} }, "*");
+          event.source.postMessage({ jsonrpc: "2.0", id: data.id, result: {} }, event.origin || "*");
         }
       }
 
@@ -434,19 +446,14 @@
       }
 
       async updateModelContext(messageText, metadata = {}) {
-        if (!window.parent || window.parent === window) return;
-        try {
-          window.parent.postMessage({
-            jsonrpc: "2.0",
-            method: "ui/notifications/context-update",
-            params: {
-              content: [{ type: "text", text: messageText }],
-              _meta: metadata
-            }
-          }, "*");
-        } catch (e) {
-          console.warn("[MCP Bridge] Failed to send context update to host:", e);
-        }
+        this.sendToHost({
+          jsonrpc: "2.0",
+          method: "ui/notifications/context-update",
+          params: {
+            content: [{ type: "text", text: messageText }],
+            _meta: metadata
+          }
+        });
       }
     }
 

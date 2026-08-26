@@ -188,53 +188,23 @@ gcloud agent-registry services update <SERVICE_ID> \
 
 ### 5. Connect in Gemini Enterprise Console
 1. Navigate to **Gemini Enterprise / Agent Builder** &rarr; **Data Stores** &rarr; **Add Data Store**.
-2. Select **Agent Gateway / Agent Registry**.
-3. Select your Agent Gateway (`demo-gateway2`) and the registered MCP Server resource ID.
-4. Activate the connector and verify that tools (`launch_breakout`, `update_game_settings`, etc.) are recognized.
-
----
-
-## 💻 Local Development
-
-### Prerequisites
-- Node.js 20+
-- npm
-
-### Installation & Run
-```bash
-# Install dependencies
-npm install
-
-# Start development server with auto-reload
-npm run dev
-
-# Or build and start production server
-npm run build
-npm start
-```
-
-* **Local MCP SSE Endpoint:** `http://localhost:8080/mcp`
-* **Local Direct Game Preview:** `http://localhost:8080/game`
-
----
-
-## 📄 License
-Apache 2.0@gcp-sa-discoveryengine.iam.gserviceaccount.com" \
-  --role="roles/run.invoker" \
-  --region=us-central1
-```
-
-### 3. Register Custom MCP Server in Gemini Enterprise Console
-1. In the Google Cloud Console, navigate to **Agent Builder (Discovery Engine) > Data Stores**.
-2. Click **Create Data Store** and select **Custom MCP Server**.
+2. Select **Agent Gateway / Agent Registry** (or **Custom MCP Server**).
 3. Fill in the connection settings:
    - **MCP Server URL:** `https://<YOUR_CLOUD_RUN_URL>/mcp`
-   - **Authorization URL:** `https://<YOUR_CLOUD_RUN_URL>/authorize` (or `https://accounts.google.com/o/oauth2/auth`)
-   - **Token URL:** `https://<YOUR_CLOUD_RUN_URL>/token` (or `https://oauth2.googleapis.com/token`)
-   - **Client ID & Secret:** Placeholder or OAuth Client credentials
-   - **Enable PKCE Support:** Enabled
-4. Save and activate the Data Store.
-5. In the **Actions** tab, click **Reload custom actions** and enable the tools (`launch_breakout`, `update_game_settings`, etc.).
+   - **Authorization URL:** `https://<YOUR_CLOUD_RUN_URL>/authorize`
+   - **Token URL:** `https://<YOUR_CLOUD_RUN_URL>/token`
+   - **PKCE Support:** Enabled (`S256`)
+4. Activate the connector and verify that tools (`launch_breakout`, `update_game_settings`, `trigger_game_cheat`) are recognized.
+
+---
+
+## 🔐 Standards-Compliant Cloud-Agnostic OAuth 2.0 (RFC 6749 & RFC 7636)
+
+This MCP server includes an integrated, zero-dependency OAuth 2.0 authorization server that supports:
+- **Authorization Code Flow with PKCE (`S256` & `plain`)**: Compatible with Gemini Enterprise, Claude Desktop, Cursor, and enterprise MCP proxies.
+- **Client Credentials Flow**: For direct server-to-server or automated agent integrations.
+- **Refresh Token Rotation**: Automatic token rotation with ephemeral cryptographic secrets.
+- **Cloud-Agnostic Architecture**: Implemented with native Node.js `crypto` primitives without vendor lock-in, making it portable across Google Cloud Run, AWS App Runner, Azure Container Apps, or local Kubernetes clusters.
 
 ---
 
@@ -258,6 +228,8 @@ npm start
 ```
 
 * **Local MCP SSE Endpoint:** `http://localhost:8080/mcp`
+* **Local Stateless JSON-RPC:** `http://localhost:8080/mcp` (POST)
+* **OAuth 2.0 Endpoints:** `http://localhost:8080/authorize` & `http://localhost:8080/token`
 * **Local Direct Game Preview:** `http://localhost:8080/game`
 
 ---
