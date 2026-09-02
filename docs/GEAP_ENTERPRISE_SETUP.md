@@ -52,16 +52,11 @@ sequenceDiagram
 
 ---
 
-## ⚠️ Critical Requirement: Regional Co-Location & Auto-Discovery
+## ⚠️ Architecture Considerations: Governed Gateway vs. Direct Connection
 
-> [!IMPORTANT]
-> For Gemini Enterprise to automatically discover MCP Apps registered in the **MCP Registry** and route calls through **Agent Gateway**, **all three components MUST reside in the same Google Cloud region** (e.g. `us-central1`):
-> 
-> 1. **MCP Registry Location:** `us-central1`
-> 2. **Agent Gateway Location:** `us-central1`
-> 3. **Gemini Enterprise Agent & Data Store:** `us-central1`
-> 
-> *If regions mismatch (e.g., your Agent Gateway is created in `us-central1` but your Gemini Enterprise Agent / Data Store is created in `global` or `europe-west1`), auto-discovery and private PSC mTLS routing will fail, and the MCP server will not populate in the catalog picker.*
+> [!NOTE]
+> * **Governed Agent Gateway Mode (Target Architecture for GEAP):** When routing through the **Agent Gateway** and discovering tools via the **MCP Registry**, all three components (Registry, Gateway, and Gemini Enterprise Data Store) must reside in the **same Google Cloud region** (e.g. `us-central1`) for private mTLS routing and catalog auto-discovery. This delivers the full suite of enterprise controls: SPIFFE agent identity verification, fine-grained `AuthzPolicy`, and in-flight payload sanitization via Model Armor.
+> * **Direct Custom MCP Mode (Standalone / Simplified Path):** Connects directly from any region (including `global` Gemini Enterprise applications) to your Cloud Run deployment over authenticated HTTPS with OAuth 2.0 PKCE. Useful for rapid standalone testing without an active Gateway perimeter.
 
 ---
 
@@ -211,25 +206,56 @@ Enable payload sanitization on the Gateway to inspect and validate all tool para
 
 ---
 
-## 🖥️ Step 6: Connect the Gateway to Gemini Enterprise
+## 🖥️ Step 6: Connect to Gemini Enterprise
+
+Select the connection option matching your architecture:
+
+### Option A: Governed Egress via Agent Gateway & MCP Registry (Target Enterprise Architecture)
+
+For production enterprise deployments requiring centralized perimeter policy enforcement (`AuthzPolicy`), cryptographic SPIFFE agent identity verification over mTLS, and in-flight payload sanitization via Model Armor:
+
+1. Ensure Steps 3, 4, and 5 above were completed in the same region (`$REGION`).
+2. Open **Google Cloud Console** &rarr; **Agent Builder (Discovery Engine)** &rarr; **Data Stores** &rarr; **Create Data Store**.
+3. Select **Agent Gateway / MCP Registry**:
+   - The registered **`Breakout MCP`** service will automatically appear in the catalog list.
+4. Configure OAuth 2.0 authentication (`${CLOUD_RUN_URL}/authorize` & `${CLOUD_RUN_URL}/token`) with PKCE `S256`.
+5. Verify authentication and attach the Data Store to your Agent.
+6. Navigate to your **Gemini Enterprise Agent** &rarr; **Actions / Tools** tab:
+   - Verify all MCP tools (`launch_breakout`, `update_game_settings`, `trigger_game_cheat`, etc.) and the `ui://breakout` resource are recognized.
+7. Save and publish the Agent configuration.
+
+---
+
+### Option B: Direct Custom MCP Data Store (Standalone / Simplified Path)
+
+For rapid prototyping, local development, or standalone demonstrations evaluating MCP Apps prior to configuring an enterprise gateway perimeter:
 
 1. Open **Google Cloud Console** &rarr; **Agent Builder (Discovery Engine)** &rarr; **Data Stores**.
 2. Click **Create Data Store**.
-3. Select **Agent Gateway / MCP Registry**:
-   - **Auto-Discovery:** Because your Registry, Gateway, and Data Store are co-located in `$REGION`, your registered **`Breakout MCP`** service will automatically appear in the list.
-4. Select the service and configure authentication:
-   - **Authentication Method:** `OAuth 2.0`
+3. Select **Custom MCP** (or **Model Context Protocol**).
+4. Configure the connection parameters:
+   - **Data Store ID:** `breakout-mcp-direct`
+   - **Display Name:** `Retro Breakout MCP`
    - **MCP Server URL:** `${CLOUD_RUN_URL}/mcp`
+   - **Authentication Method:** `OAuth 2.0`
    - **Authorization URL:** `${CLOUD_RUN_URL}/authorize`
    - **Token URL:** `${CLOUD_RUN_URL}/token`
    - **Client ID:** `gemini-enterprise-agent`
-   - **Client Secret:** `secret123` (or any string)
-   - **Enable PKCE Support:** ☑️ **Checked** (`S256`)
-5. Click **Verify Auth** &rarr; **Create & Connect**.
-6. Navigate to your **Gemini Enterprise Agent** &rarr; **Actions** tab:
-   - Click **Add Action** and attach your new `mcp-breakout-arcade` data store.
-   - Click **Reload custom actions** to verify all 7 tools (`launch_breakout`, `update_game_settings`, `trigger_game_cheat`, etc.) are recognized.
-7. Publish / Save the Agent configuration.
+   - **Client Secret:** `secret123` (or any placeholder string)
+   - **PKCE Support:** ☑️ **Enabled (`S256`)**
+5. Click **Verify Auth**:
+   - A consent popup window appears requesting access to the Breakout arcade service.
+   - Click **Authorize Access**.
+6. Click **Create & Connect**.
+7. Navigate to your **Gemini Enterprise Agent** &rarr; **Actions / Tools** tab:
+   - Click **Add Action** and attach your new `breakout-mcp-direct` data store.
+   - Verify all MCP tools (`launch_breakout`, `update_game_settings`, `trigger_game_cheat`, etc.) are recognized.
+8. Save and publish the Agent configuration.
+
+> [!TIP]
+> **Enterprise Production vs Rapid Standalone Testing:**
+> - **Option A (Agent Gateway + MCP Registry):** Target architecture for enterprise production environments requiring full zero-trust governance, SPIFFE identity attestation, `AuthzPolicy` enforcement, and Model Armor payload sanitization.
+> - **Option B (Direct Custom MCP):** Lightweight developer option connecting directly over HTTPS, ideal for isolated testing, POCs, or initial integration verification before enabling perimeter policies.
 
 ---
 

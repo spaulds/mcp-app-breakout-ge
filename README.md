@@ -77,12 +77,15 @@ Includes a built-in, zero-dependency OAuth 2.0 authorization server (RFC 6749 & 
 
 ---
 
-## 🚀 Deployment & Enterprise Setup
+## 🚀 Deployment & Connection Topologies
 
-* **Full Step-by-Step Enterprise Guide:** See [docs/GEAP_ENTERPRISE_SETUP.md](docs/GEAP_ENTERPRISE_SETUP.md) for complete instructions covering **MCP Registry** publishing, **Agent Gateway** creation, `AuthzPolicy`, Model Armor, custom IAM roles, regional co-location rules, and Gemini Enterprise Data Store wiring.
+The Retro Breakout MCP App supports two connection topologies:
+
+1. **Governed Enterprise Gateway (Target Architecture for GEAP):** The production-grade zero-trust pattern. Invocations route through Google Cloud **Agent Gateway** and **MCP Registry**, enforcing cryptographic SPIFFE agent identities over mTLS, fine-grained `AuthzPolicy` tool permissions, and in-flight payload sanitization via **Model Armor**.
+2. **Direct Connection (Custom MCP):** A streamlined connection directly between Gemini Enterprise and Cloud Run via OAuth 2.0 PKCE (`S256`). Ideal for rapid prototyping, standalone demonstrations, or environments evaluating MCP Apps prior to configuring gateway policies.
 
 > [!NOTE]
-> **Regional Co-Location Requirement:** Your **MCP Registry**, **Agent Gateway**, and **Gemini Enterprise Agent/Data Store** must all be provisioned in the **same region** (e.g. `us-central1`) for automatic tool discovery and private mTLS routing to function.
+> See [docs/GEAP_ENTERPRISE_SETUP.md](docs/GEAP_ENTERPRISE_SETUP.md) for full architectural guides and step-by-step setup instructions for both deployment topologies.
 
 ### Quick Start (Google Cloud Run)
 ```bash
@@ -105,12 +108,23 @@ gcloud run services add-iam-policy-binding mcp-breakout-arcade \
   --role="roles/run.invoker" \
   --region=us-central1 \
   --project=<PROJECT_ID>
-
-# 3. Connect in Gemini Enterprise Console (OAuth 2.0 PKCE S256)
-# MCP URL:       https://<CLOUD_RUN_URL>/mcp
-# Authorize URL: https://<CLOUD_RUN_URL>/authorize
-# Token URL:     https://<CLOUD_RUN_URL>/token
 ```
+
+### 3. Connect in Gemini Enterprise Console (Direct Custom MCP)
+
+1. Open **Google Cloud Console** &rarr; **Agent Builder** (or **Gemini Enterprise**) &rarr; **Data Stores** &rarr; **Create Data Store**.
+2. Select **Custom MCP** (or **Model Context Protocol**).
+3. Configure the connection:
+   - **Data Store Name / ID:** `breakout-mcp-direct`
+   - **MCP Server URL:** `https://<CLOUD_RUN_URL>/mcp`
+   - **Authentication:** `OAuth 2.0`
+   - **Authorization URL:** `https://<CLOUD_RUN_URL>/authorize`
+   - **Token URL:** `https://<CLOUD_RUN_URL>/token`
+   - **Client ID:** `gemini-enterprise-agent`
+   - **Client Secret:** `secret123` (or any placeholder string)
+   - **PKCE Support:** ☑️ **Enabled (`S256`)**
+4. Click **Verify Auth** (approve in the popup window) &rarr; **Create**.
+5. Attach the Data Store to your **Gemini Enterprise Agent** under **Actions / Tools**, save, and ask: *"Let's play Breakout!"*
 
 ---
 

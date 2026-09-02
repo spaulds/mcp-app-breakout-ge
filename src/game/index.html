@@ -76,27 +76,27 @@
 
     /* In-App Retro Settings Drawer / Modal */
     #settings-btn {
-      position: absolute;
-      bottom: 10px;
-      right: 12px;
-      z-index: 20;
-      background: rgba(0, 0, 0, 0.75);
+      background: #181818;
       border: 1px solid #00ff66;
       color: #00ff66;
-      padding: 4px 8px;
+      padding: 4px 10px;
       font-size: 11px;
       font-family: inherit;
       cursor: pointer;
-      border-radius: 3px;
+      border-radius: 4px;
       letter-spacing: 1px;
       font-weight: bold;
       transition: all 0.2s ease;
+      display: inline-flex;
+      align-items: center;
+      box-shadow: 0 0 8px rgba(0, 255, 102, 0.15);
+      flex-shrink: 0;
     }
 
     #settings-btn:hover {
       background: #00ff66;
       color: #000;
-      box-shadow: 0 0 10px #00ff66;
+      box-shadow: 0 0 12px #00ff66;
     }
 
     #settings-modal {
@@ -243,13 +243,26 @@
 
     /* Controls tip & status bar */
     #controls-tip {
-      margin-top: 6px;
+      margin-top: 8px;
       font-size: 11px;
       color: #aaaaaa;
-      text-align: center;
       text-transform: uppercase;
       letter-spacing: 1px;
       line-height: 1.3;
+      width: 96vw;
+      max-width: 800px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .controls-left {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px;
     }
 
     .badge {
@@ -269,7 +282,6 @@
 
   <div id="arcade-cabinet">
     <div id="scanlines"></div>
-    <button id="settings-btn">⚙️ SETTINGS</button>
     <canvas id="gameCanvas" width="800" height="600"></canvas>
 
     <!-- In-App Settings Drawer -->
@@ -318,9 +330,12 @@
   </div>
 
   <div id="controls-tip">
-    ◄ LEFT / RIGHT ► Keys • SPACE or CLICK to Launch/Fire • [ESC] for Settings
-    <span id="ai-status" class="badge" style="display:none;">AI AUTOPILOT ACTIVE</span>
-    <span id="laser-status" class="badge" style="display:none; color:#ff007f; border-color:#ff007f;">LASER CANNONS READY</span>
+    <div class="controls-left">
+      <span>◄ LEFT / RIGHT ► Keys • SPACE / CLICK to Launch/Fire</span>
+      <span id="ai-status" class="badge" style="display:none;">AI AUTOPILOT ACTIVE</span>
+      <span id="laser-status" class="badge" style="display:none; color:#ff007f; border-color:#ff007f;">LASER CANNONS READY</span>
+    </div>
+    <button id="settings-btn">⚙️ SETTINGS [ESC]</button>
   </div>
 
   <script>
@@ -483,6 +498,14 @@
       autopilot: false,
       godMode: false
     };
+
+    // Player Identity
+    window.INITIAL_PLAYER_NAME = "Spaulds";
+    let playerName = window.INITIAL_PLAYER_NAME;
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      playerName = urlParams.get('player') || urlParams.get('playerName') || localStorage.getItem('breakout_player_name') || window.INITIAL_PLAYER_NAME || 'Spaulds';
+    } catch(e) {}
 
     // Game State
     let score = 0;
@@ -900,6 +923,10 @@
     }
 
     mcp.ontoolresult = (data) => {
+      if (data.playerName) {
+        playerName = data.playerName;
+        try { localStorage.setItem('breakout_player_name', playerName); } catch(e) {}
+      }
       if (data.settings) applyConfiguration(data.settings);
       if (data.cheatApplied) handleCheat(data.cheatApplied);
     };
@@ -1164,31 +1191,36 @@
       drawParticles();
 
       // Retro Scoreboard with clean spacing (no overlap with any UI elements)
+      ctx.fillStyle = "#00ffcc";
+      ctx.font = "bold 12px 'Courier New', Courier, monospace";
+      ctx.textAlign = "left";
+      ctx.fillText(`PLAYER: ${playerName.toUpperCase()}`, 24, 20);
+
       ctx.fillStyle = "#ffffff";
       ctx.font = "bold 18px 'Courier New', Courier, monospace";
       ctx.textAlign = "left";
-      ctx.fillText(`SCORE: ${score.toString().padStart(4, '0')}`, 24, 38);
+      ctx.fillText(`SCORE: ${score.toString().padStart(4, '0')}`, 24, 40);
 
       ctx.textAlign = "center";
-      ctx.fillText(`HI-SCORE: ${highScore.toString().padStart(4, '0')}`, canvas.width / 2, 38);
+      ctx.fillText(`HI-SCORE: ${highScore.toString().padStart(4, '0')}`, canvas.width / 2, 40);
 
       ctx.textAlign = "right";
-      ctx.fillText(`LIVES: ${currentLives}`, canvas.width - 24, 38);
+      ctx.fillText(`LIVES: ${currentLives}`, canvas.width - 24, 40);
 
       ctx.fillStyle = "#333333";
       ctx.fillRect(24, 52, canvas.width - 48, 2);
 
       // Overlays
       if (gameOver) {
-        drawOverlay("GAME OVER", "CLICK OR PRESS SPACE TO START NEW GAME");
+        drawOverlay("GAME OVER", "CLICK OR PRESS SPACE TO START NEW GAME", `NICE TRY, ${playerName.toUpperCase()}!`);
       } else if (gameWon) {
-        drawOverlay(`LEVEL ${level} CLEARED!`, `SCORE: ${score} • CLICK OR SPACE FOR LEVEL ${level + 1}`);
+        drawOverlay(`LEVEL ${level} CLEARED!`, `SCORE: ${score} • CLICK OR SPACE FOR LEVEL ${level + 1}`, `VICTORY FOR ${playerName.toUpperCase()}!`);
       } else if (isPaused && !isSettingsOpen) {
         if (!ball.active) {
           if (isResumedSession) {
-            drawOverlay("GAME RESUMED!", `SCORE: ${score} | LEVEL: ${level} • PRESS SPACE TO LAUNCH`);
+            drawOverlay(`WELCOME BACK ${playerName.toUpperCase()}!`, `SCORE: ${score} | LEVEL: ${level} • PRESS SPACE TO LAUNCH`, "★ SESSION RESUMED ★");
           } else {
-            drawOverlay("READY!", "PRESS SPACE OR CLICK CANVAS TO LAUNCH");
+            drawOverlay(`WELCOME ${playerName.toUpperCase()}!`, "PRESS SPACE OR CLICK CANVAS TO LAUNCH", "★ RETRO BREAKOUT ARCADE ★");
           }
         } else {
           drawOverlay("PAUSED", "PRESS SPACE TO RESUME");
@@ -1196,18 +1228,25 @@
       }
     }
 
-    function drawOverlay(title, subtitle) {
-      ctx.fillStyle = "rgba(0, 0, 0, 0.78)";
+    function drawOverlay(title, subtitle, tagText) {
+      ctx.fillStyle = "rgba(0, 0, 0, 0.82)";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+      if (tagText) {
+        ctx.fillStyle = "#00ffff";
+        ctx.font = "bold 15px 'Courier New', Courier, monospace";
+        ctx.textAlign = "center";
+        ctx.fillText(tagText, canvas.width / 2, canvas.height / 2 - 50);
+      }
+
       ctx.fillStyle = "#ff0040";
-      ctx.font = "bold 30px 'Courier New', Courier, monospace";
+      ctx.font = "bold 28px 'Courier New', Courier, monospace";
       ctx.textAlign = "center";
-      ctx.fillText(title, canvas.width / 2, canvas.height / 2 - 15);
+      ctx.fillText(title, canvas.width / 2, canvas.height / 2 - 12);
 
       ctx.fillStyle = "#ffffff";
       ctx.font = "14px 'Courier New', Courier, monospace";
-      ctx.fillText(subtitle, canvas.width / 2, canvas.height / 2 + 25);
+      ctx.fillText(subtitle, canvas.width / 2, canvas.height / 2 + 26);
     }
 
     // Delta-Time Game Loop

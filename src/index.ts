@@ -56,6 +56,7 @@ function loadGameHtml(): string {
 }
 
 const CACHED_GAME_HTML = loadGameHtml();
+let currentActivePlayer = "Spaulds";
 
 // --- Standards-Compliant Cloud-Agnostic OAuth 2.0 Store ---
 interface AuthCodeRecord {
@@ -65,6 +66,7 @@ interface AuthCodeRecord {
   codeChallenge?: string;
   codeChallengeMethod?: "S256" | "plain";
   scope?: string;
+  playerName?: string;
   expiresAt: number;
 }
 
@@ -72,6 +74,7 @@ interface TokenRecord {
   accessToken: string;
   refreshToken: string;
   clientId: string;
+  playerName?: string;
   scope: string;
   expiresAt: number;
 }
@@ -95,7 +98,7 @@ setInterval(() => {
 }, 60000);
 
 // Helper to authenticate requests (permissive by default, strict only if REQUIRE_AUTH=true)
-function authenticateRequest(req: Request): { authenticated: boolean; error?: string; client?: string } {
+function authenticateRequest(req: Request): { authenticated: boolean; error?: string; client?: string; playerName?: string } {
   const requireAuth = process.env.REQUIRE_AUTH === "true";
   const authHeader = req.headers.authorization;
 
@@ -103,29 +106,29 @@ function authenticateRequest(req: Request): { authenticated: boolean; error?: st
     if (requireAuth) {
       return { authenticated: false, error: "Missing Authorization header" };
     }
-    return { authenticated: true, client: "anonymous" };
+    return { authenticated: true, client: "anonymous", playerName: currentActivePlayer };
   }
 
   if (authHeader.startsWith("Bearer ")) {
     const token = authHeader.slice(7).trim();
     const tokenRecord = activeTokens.get(token);
     if (tokenRecord) {
-      return { authenticated: true, client: tokenRecord.clientId };
+      return { authenticated: true, client: tokenRecord.clientId, playerName: tokenRecord.playerName || currentActivePlayer };
     }
-    return { authenticated: true, client: "bearer-token" };
+    return { authenticated: true, client: "bearer-token", playerName: currentActivePlayer };
   }
 
   if (authHeader.startsWith("Basic ")) {
     try {
       const creds = Buffer.from(authHeader.slice(6).trim(), "base64").toString("utf-8");
       const [user] = creds.split(":");
-      return { authenticated: true, client: user || "basic-client" };
+      return { authenticated: true, client: user || "basic-client", playerName: currentActivePlayer };
     } catch {
-      return { authenticated: true, client: "basic-client" };
+      return { authenticated: true, client: "basic-client", playerName: currentActivePlayer };
     }
   }
 
-  return { authenticated: true, client: "custom-auth" };
+  return { authenticated: true, client: "custom-auth", playerName: currentActivePlayer };
 }
 
 // --- Tool & Resource Definitions ---
@@ -273,21 +276,23 @@ const RESOURCE_DEFINITIONS = [
 ];
 
 // --- Core Tool Execution Logic with Parameter Bounds & Sanitization ---
-function executeToolCall(name: string, args: any) {
-  console.log(`[TOOL CALL] Executing tool: ${name} with args:`, JSON.stringify(args || {}));
+function executeToolCall(name: string, args: any, sessionPlayerName?: string) {
+  const playerName = sessionPlayerName || args?.playerName || currentActivePlayer || "Spaulds";
+  currentActivePlayer = playerName;
+  console.log(`[TOOL CALL] Executing tool: ${name} for player: ${playerName}`);
 
   if (name === "launch_breakout" || name === "get_breakout_game" || name === "launch_game") {
     return {
       content: [
         {
           type: "text",
-          text: "I have initialized the Retro Breakout Game! The interactive Atari Breakout canvas is loaded directly into your chat window below. Control the paddle using your Left and Right arrow keys or touch swipe, or ask me to turn on AI Autopilot or adjust settings for you!"
+          text: `Welcome ${playerName}! I have initialized the Retro Breakout Game! The interactive Atari Breakout canvas is loaded directly into your chat window below. Control the paddle using your Left and Right arrow keys or touch swipe, or ask me to turn on AI Autopilot or adjust settings for you!`
         }
       ],
       isError: false,
       _meta: {
         ui: {
-          resourceUri: "ui://breakout"
+          resourceUri: `ui://breakout?player=${encodeURIComponent(playerName)}`
         }
       }
     };
@@ -440,13 +445,22 @@ function createMcpServerInstance(): Server {
 
   s.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     console.log(`[RESOURCE READ] Client is reading resource: ${request.params.uri}`);
-    if (request.params.uri === "ui://breakout") {
+    if (request.params.uri === "ui://breakout" || request.params.uri.startsWith("ui://breakout")) {
+      let reqPlayer = currentActivePlayer || "Spaulds";
+      const match = request.params.uri.match(/[?&]player=([^&]+)/);
+      if (match) {
+        try { reqPlayer = decodeURIComponent(match[1]); } catch(e) {}
+      }
+      const customHtml = CACHED_GAME_HTML.replace(
+        'window.INITIAL_PLAYER_NAME = "Spaulds";',
+        `window.INITIAL_PLAYER_NAME = ${JSON.stringify(reqPlayer)};`
+      );
       return {
         contents: [
           {
-            uri: "ui://breakout",
+            uri: request.params.uri,
             mimeType: "text/html;profile=mcp-app",
-            text: CACHED_GAME_HTML
+            text: customHtml
           }
         ]
       };
@@ -623,12 +637,21 @@ app.post("/mcp", async (req: Request, res: Response) => {
       case "resources/read":
         const targetUri = params?.uri || params?.resourceUri || "";
         if (targetUri && (targetUri === "ui://breakout" || targetUri.startsWith("ui://breakout"))) {
+          let reqPlayer = currentActivePlayer || "Spaulds";
+          const match = targetUri.match(/[?&]player=([^&]+)/);
+          if (match) {
+            try { reqPlayer = decodeURIComponent(match[1]); } catch(e) {}
+          }
+          const customHtml = CACHED_GAME_HTML.replace(
+            'window.INITIAL_PLAYER_NAME = "Spaulds";',
+            `window.INITIAL_PLAYER_NAME = ${JSON.stringify(reqPlayer)};`
+          );
           result = {
             contents: [
               {
                 uri: targetUri,
                 mimeType: "text/html;profile=mcp-app",
-                text: CACHED_GAME_HTML
+                text: customHtml
               }
             ]
           };
@@ -638,7 +661,7 @@ app.post("/mcp", async (req: Request, res: Response) => {
         break;
 
       case "tools/call":
-        result = executeToolCall(params?.name, params?.arguments);
+        result = executeToolCall(params?.name, params?.arguments, auth.playerName);
         break;
 
       default:
@@ -688,7 +711,17 @@ app.get("/authorize", (req: Request, res: Response) => {
   const codeChallengeMethod = (req.query.code_challenge_method as "S256" | "plain") || (codeChallenge ? "S256" : undefined);
   const scope = (req.query.scope as string) || "mcp";
 
-  console.log(`[OAuth /authorize] Request from client '${clientId}', redirect_uri: ${redirectUri}, PKCE: ${codeChallenge ? codeChallengeMethod : "none"}`);
+  const loginHint = (req.query.login_hint as string) || (req.query.username as string) || (req.query.user as string) || "";
+  let sessionPlayer = currentActivePlayer || "Spaulds";
+  if (loginHint) {
+    const raw = loginHint.split("@")[0].trim();
+    if (raw) {
+      sessionPlayer = raw.charAt(0).toUpperCase() + raw.slice(1);
+    }
+  }
+  currentActivePlayer = sessionPlayer;
+
+  console.log(`[OAuth /authorize] Request from client '${clientId}', player: '${sessionPlayer}', redirect_uri: ${redirectUri}, PKCE: ${codeChallenge ? codeChallengeMethod : "none"}`);
 
   if (!redirectUri) {
     res.status(400).json({ error: "invalid_request", error_description: "Missing required 'redirect_uri' parameter" });
@@ -714,6 +747,7 @@ app.get("/authorize", (req: Request, res: Response) => {
     codeChallenge,
     codeChallengeMethod,
     scope,
+    playerName: sessionPlayer,
     expiresAt
   });
 
@@ -743,11 +777,17 @@ app.post("/token", (req: Request, res: Response) => {
   }
   clientId = clientId || "gemini-enterprise-agent";
 
+  let resolvedPlayer = currentActivePlayer || "Spaulds";
+
   console.log(`[OAuth /token] Exchange request: grant_type='${grantType}', client_id='${clientId}', code='${code ? code.substring(0, 8) + "..." : "none"}'`);
 
   if (code) {
     const authRecord = authCodes.get(code);
     if (authRecord) {
+      if (authRecord.playerName) {
+        resolvedPlayer = authRecord.playerName;
+        currentActivePlayer = resolvedPlayer;
+      }
       authCodes.delete(code);
       if (authRecord.codeChallenge && codeVerifier) {
         let calculatedChallenge = authRecord.codeChallengeMethod === "plain"
@@ -772,11 +812,12 @@ app.post("/token", (req: Request, res: Response) => {
     accessToken,
     refreshToken,
     clientId,
+    playerName: resolvedPlayer,
     scope: "mcp",
     expiresAt: Date.now() + expiresIn * 1000
   });
 
-  console.log(`[OAuth /token] Successfully issued access_token for client: '${clientId}'`);
+  console.log(`[OAuth /token] Successfully issued access_token for client: '${clientId}', player: '${resolvedPlayer}'`);
 
   res.status(200).json({
     access_token: accessToken,
