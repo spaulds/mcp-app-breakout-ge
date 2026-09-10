@@ -116,29 +116,29 @@ echo "Private Cloud Run URL: $CLOUD_RUN_URL"
 
 ## 🔐 Step 2: Configure Service Agent IAM Roles
 
-Grant `roles/run.invoker` strictly to the Google Cloud Service Agents that facilitate Discovery Engine and Agent Gateway routing:
+Grant `roles/run.invoker` to the Google Cloud Service Agents that facilitate Discovery Engine and Agent Gateway routing:
 
 ```bash
-# 1. Discovery Engine Service Agent
+# 1. Discovery Engine Service Agent (always present when Discovery Engine is enabled)
 gcloud run services add-iam-policy-binding $SERVICE_NAME \
   --member="serviceAccount:service-${PROJECT_NUMBER}@gcp-sa-discoveryengine.iam.gserviceaccount.com" \
   --role="roles/run.invoker" \
   --region=$REGION \
   --project=$PROJECT_ID
 
-# 2. Agent Gateway Service Agent
+# 2. Agent Gateway Service Agent (if Agent Gateway is enabled in your project)
 gcloud run services add-iam-policy-binding $SERVICE_NAME \
   --member="serviceAccount:service-${PROJECT_NUMBER}@gcp-sa-agentgateway.iam.gserviceaccount.com" \
   --role="roles/run.invoker" \
   --region=$REGION \
-  --project=$PROJECT_ID
+  --project=$PROJECT_ID || echo "Agent Gateway service agent not created yet; grant when gateway is initialized."
 
 # 3. Service Extensions Data Plane Agent (if cross-project DEP is used)
 gcloud run services add-iam-policy-binding $SERVICE_NAME \
   --member="serviceAccount:service-${PROJECT_NUMBER}@gcp-sa-dep.iam.gserviceaccount.com" \
   --role="roles/run.invoker" \
   --region=$REGION \
-  --project=$PROJECT_ID
+  --project=$PROJECT_ID || true
 ```
 
 ---

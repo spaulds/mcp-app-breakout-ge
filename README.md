@@ -87,28 +87,39 @@ The Retro Breakout MCP App supports two connection topologies:
 > [!NOTE]
 > See [docs/GEAP_ENTERPRISE_SETUP.md](docs/GEAP_ENTERPRISE_SETUP.md) for full architectural guides and step-by-step setup instructions for both deployment topologies.
 
+### Prerequisites
+- Node.js 20+ and npm (`node -v`, `npm -v`)
+- Google Cloud SDK (`gcloud`) installed and authenticated (`gcloud auth login`)
+- Target GCP project with Cloud Run Admin API (`run.googleapis.com`) and Cloud Build API (`cloudbuild.googleapis.com`) enabled
+
+```bash
+# Set environment variables
+export PROJECT_ID="<YOUR_PROJECT_ID>"
+export REGION="us-central1"
+export SERVICE_NAME="mcp-breakout-arcade"
+export PROJECT_NUMBER=$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)')
+```
+
 ### Quick Start (Google Cloud Run)
 ```bash
 # 1. Deploy private Cloud Run service
-gcloud run deploy mcp-breakout-arcade \
+gcloud run deploy $SERVICE_NAME \
   --source . \
-  --region us-central1 \
-  --project <PROJECT_ID> \
-  --no-allow-unauthenticated
+  --region $REGION \
+  --project $PROJECT_ID \
+  --no-allow-unauthenticated \
+  --port 8080
 
-# 2. Grant Invoker role to Discovery Engine & Agent Gateway Service Agents
-gcloud run services add-iam-policy-binding mcp-breakout-arcade \
-  --member="serviceAccount:service-<PROJECT_NUMBER>@gcp-sa-discoveryengine.iam.gserviceaccount.com" \
+# 2. Grant Invoker role to Discovery Engine Service Agent
+gcloud run services add-iam-policy-binding $SERVICE_NAME \
+  --member="serviceAccount:service-${PROJECT_NUMBER}@gcp-sa-discoveryengine.iam.gserviceaccount.com" \
   --role="roles/run.invoker" \
-  --region=us-central1 \
-  --project=<PROJECT_ID>
-
-gcloud run services add-iam-policy-binding mcp-breakout-arcade \
-  --member="serviceAccount:service-<PROJECT_NUMBER>@gcp-sa-agentgateway.iam.gserviceaccount.com" \
-  --role="roles/run.invoker" \
-  --region=us-central1 \
-  --project=<PROJECT_ID>
+  --region=$REGION \
+  --project=$PROJECT_ID
 ```
+
+> [!NOTE]
+> When integrating with Agent Gateway (Governed mode), ensure your gateway's service agent or caller identity is also granted `roles/run.invoker`.
 
 ### 3. Connect in Gemini Enterprise Console (Direct Custom MCP)
 
@@ -131,11 +142,20 @@ gcloud run services add-iam-policy-binding mcp-breakout-arcade \
 ## 💻 Local Development
 
 ```bash
-# Install and run
+# Install dependencies
 npm install
+
+# Build TypeScript and bundle static assets
+npm run build
+
+# Start local server (production mode)
+npm start
+
+# Or run with live reloading (development mode)
 npm run dev
 
 # Endpoints:
+# • Health Check:     http://localhost:8080/
 # • MCP SSE:          http://localhost:8080/mcp
 # • MCP JSON-RPC:     http://localhost:8080/mcp (POST)
 # • OAuth 2.0 PKCE:   http://localhost:8080/authorize & /token
