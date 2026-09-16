@@ -56,7 +56,7 @@ function loadGameHtml(): string {
 }
 
 const CACHED_GAME_HTML = loadGameHtml();
-let currentActivePlayer = "Spaulds";
+let currentActivePlayer = "Player 1";
 
 // --- Standards-Compliant Cloud-Agnostic OAuth 2.0 Store ---
 interface AuthCodeRecord {
@@ -277,22 +277,25 @@ const RESOURCE_DEFINITIONS = [
 
 // --- Core Tool Execution Logic with Parameter Bounds & Sanitization ---
 function executeToolCall(name: string, args: any, sessionPlayerName?: string) {
-  const playerName = sessionPlayerName || args?.playerName || currentActivePlayer || "Spaulds";
+  const playerName = sessionPlayerName || args?.playerName || currentActivePlayer || "Player 1";
   currentActivePlayer = playerName;
   console.log(`[TOOL CALL] Executing tool: ${name} for player: ${playerName}`);
 
   if (name === "launch_breakout" || name === "get_breakout_game" || name === "launch_game") {
+    const greeting = (playerName && playerName !== "Player 1") ? `Welcome ${playerName}! ` : "";
     return {
       content: [
         {
           type: "text",
-          text: `Welcome ${playerName}! I have initialized the Retro Breakout Game! The interactive Atari Breakout canvas is loaded directly into your chat window below. Control the paddle using your Left and Right arrow keys or touch swipe, or ask me to turn on AI Autopilot or adjust settings for you!`
+          text: `${greeting}I have initialized the Retro Breakout Game! The interactive Atari Breakout canvas is loaded directly into your chat window below. Control the paddle using your Left and Right arrow keys or touch swipe, or ask me to turn on AI Autopilot or adjust settings for you!`
         }
       ],
       isError: false,
       _meta: {
         ui: {
-          resourceUri: `ui://breakout?player=${encodeURIComponent(playerName)}`
+          resourceUri: (playerName && playerName !== "Player 1")
+            ? `ui://breakout?player=${encodeURIComponent(playerName)}`
+            : "ui://breakout"
         }
       }
     };
@@ -446,13 +449,13 @@ function createMcpServerInstance(): Server {
   s.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     console.log(`[RESOURCE READ] Client is reading resource: ${request.params.uri}`);
     if (request.params.uri === "ui://breakout" || request.params.uri.startsWith("ui://breakout")) {
-      let reqPlayer = currentActivePlayer || "Spaulds";
+      let reqPlayer = currentActivePlayer || "Player 1";
       const match = request.params.uri.match(/[?&]player=([^&]+)/);
       if (match) {
         try { reqPlayer = decodeURIComponent(match[1]); } catch(e) {}
       }
       const customHtml = CACHED_GAME_HTML.replace(
-        'window.INITIAL_PLAYER_NAME = "Spaulds";',
+        'window.INITIAL_PLAYER_NAME = "Player 1";',
         `window.INITIAL_PLAYER_NAME = ${JSON.stringify(reqPlayer)};`
       );
       return {
@@ -637,13 +640,13 @@ app.post("/mcp", async (req: Request, res: Response) => {
       case "resources/read":
         const targetUri = params?.uri || params?.resourceUri || "";
         if (targetUri && (targetUri === "ui://breakout" || targetUri.startsWith("ui://breakout"))) {
-          let reqPlayer = currentActivePlayer || "Spaulds";
+          let reqPlayer = currentActivePlayer || "Player 1";
           const match = targetUri.match(/[?&]player=([^&]+)/);
           if (match) {
             try { reqPlayer = decodeURIComponent(match[1]); } catch(e) {}
           }
           const customHtml = CACHED_GAME_HTML.replace(
-            'window.INITIAL_PLAYER_NAME = "Spaulds";',
+            'window.INITIAL_PLAYER_NAME = "Player 1";',
             `window.INITIAL_PLAYER_NAME = ${JSON.stringify(reqPlayer)};`
           );
           result = {
@@ -712,7 +715,7 @@ app.get("/authorize", (req: Request, res: Response) => {
   const scope = (req.query.scope as string) || "mcp";
 
   const loginHint = (req.query.login_hint as string) || (req.query.username as string) || (req.query.user as string) || "";
-  let sessionPlayer = currentActivePlayer || "Spaulds";
+  let sessionPlayer = currentActivePlayer || "Player 1";
   if (loginHint) {
     const raw = loginHint.split("@")[0].trim();
     if (raw) {
@@ -777,7 +780,7 @@ app.post("/token", (req: Request, res: Response) => {
   }
   clientId = clientId || "gemini-enterprise-agent";
 
-  let resolvedPlayer = currentActivePlayer || "Spaulds";
+  let resolvedPlayer = currentActivePlayer || "Player 1";
 
   console.log(`[OAuth /token] Exchange request: grant_type='${grantType}', client_id='${clientId}', code='${code ? code.substring(0, 8) + "..." : "none"}'`);
 

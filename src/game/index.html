@@ -500,11 +500,11 @@
     };
 
     // Player Identity
-    window.INITIAL_PLAYER_NAME = "Spaulds";
+    window.INITIAL_PLAYER_NAME = "Player 1";
     let playerName = window.INITIAL_PLAYER_NAME;
     try {
       const urlParams = new URLSearchParams(window.location.search);
-      playerName = urlParams.get('player') || urlParams.get('playerName') || localStorage.getItem('breakout_player_name') || window.INITIAL_PLAYER_NAME || 'Spaulds';
+      playerName = urlParams.get('player') || urlParams.get('playerName') || localStorage.getItem('breakout_player_name') || window.INITIAL_PLAYER_NAME || 'Player 1';
     } catch(e) {}
 
     // Game State
