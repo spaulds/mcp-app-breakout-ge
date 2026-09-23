@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DOOM</title>
+<style>
+  /*
+   * ui://doom shell.
+   *
+   * MCP Apps hosts (Gemini Enterprise included) render a UI resource inside a sandboxed iframe
+   * whose Content-Security-Policy is built from the spec's template:
+   *   script-src 'self' 'unsafe-inline' <resourceDomains>
+   * There is no 'wasm-unsafe-eval' in that template, so WebAssembly.instantiate() is refused in
+   * the sandbox and a self-contained DOOM page dies with "BOOT FAILED: CompileError".
+   *
+   * The spec does let a resource declare `frameDomains`, so this shell does the only thing that
+   * works: it owns the MCP Apps bridge and nests the real game page (served from our own origin,
+   * where our CSP applies) in an iframe, relaying tool results down and model-context updates up.
+   */
+  :root { color-scheme: dark; }
+  html, body { margin: 0; padding: 0; background: #000; color: #e5e5e5; font-family: ui-monospace, Menlo, Consolas, monospace; }
+  #cabinet { position: relative; width: 100%; max-width: 960px; margin: 0 auto; aspect-ratio: 8 / 5; background: #000; overflow: hidden; border: 2px solid #3a0000; box-shadow: 0 0 24px rgba(200, 0, 0, 0.25); }
+  #game { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #000; display: block; }
+  #panel { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; text-align: center; background: radial-gradient(ellipse at center, #2a0000 0%, #000 70%); }
+  #panel.hidden { display: none; }
+  #panel h1 { margin: 0; font-size: 28px; letter-spacing: 6px; color: #ff3b1f; text-shadow: 0 0 12px #ff3b1f; }
+  #panel p { margin: 0; font-size: 13px; line-height: 1.5; max-width: 60ch; color: #c8c8c8; }
+  #panel .bar { width: 60%; height: 8px; border: 1px solid #661111; background: #110000; }
+  #panel .bar > div { height: 100%; width: 15%; background: #ff3b1f; animation: pulse 1.2s ease-in-out infinite alternate; }
+  @keyframes pulse { from { width: 15%; } to { width: 85%; } }
+  #panel.failed .bar { display: none; }
+  #panel.failed #reason { color: #ff6a55; white-space: pre-wrap; }
+  #panel a { color: #ffb347; }
+</style>
+</head>
+<body>
+  <div id="cabinet">
+    <iframe id="game" title="DOOM" allow="fullscreen; gamepad" allowfullscreen></iframe>
+    <div id="panel">
+      <h1>DOOM</h1>
+      <p id="status">Loading the engine from the DOOM MCP server&hellip;</p>
+      <div class="bar"><div></div></div>
+      <p id="reason"></p>
+      <p id="direct"></p>
+    </div>
+  </div>
+
+<script>
+  // Substituted per request by the server.
+  window.INITIAL_PLAYER_NAME = "Player 1";
+  window.DOOM_GAME_ORIGIN = "__DOOM_GAME_ORIGIN__";
+
+  const GAME_ORIGIN = String(window.DOOM_GAME_ORIGIN || "").replace(/\/$/, "");
+  const playerName = window.INITIAL_PLAYER_NAME || "Player 1";
+  const frame = document.getElementById("game");
+  const panel = document.getElementById("panel");
+  const statusEl = document.getElementById("status");
+  const reasonEl = document.getElementById("reason");
+  const directEl = document.getElementById("direct");
+
+  const gameUrl = `${GAME_ORIGIN}/game?embed=1&player=${encodeURIComponent(playerName)}`;
+  const isGameMessage = (event) => frame.contentWindow && event.source === frame.contentWindow;
+
+  /**
+   * MCP Apps bridge (same protocol handling as the game page had when it talked to the host
+   * directly), with one addition: messages coming from the nested game frame are ignored so the
+   * host-origin lock cannot latch onto our own origin.
+   */
+  class MCPAppsBridge {
+    constructor() {
+      this.initRequestId = 1;
+      this.initialized = false;
+      this.hostContext = {};
+      this.hostOrigin = null;
+      this.ontoolresult = null;
+      window.addEventListener("message", (event) => {
+        if (isGameMessage(event)) return;
+        this.handleIncomingMessage(event);
+      });
+      this.sendToHost({
+        jsonrpc: "2.0",
+        id: this.initRequestId,
+        method: "ui/initialize",
+        params: {
+          protocolVersion: "2024-11-05",
+          appInfo: { name: "doom", version: "2.0.0" },
+          appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] }
+        }
+      });
+    }
+    sendToHost(message) {
+      if (!window.parent || window.parent === window) return;
+      try {
+        const target = this.hostOrigin && this.hostOrigin !== "null" ? this.hostOrigin : "*";
+        window.parent.postMessage(message, target);
+      } catch (err) {
+        console.warn("[MCP Bridge] postMessage dispatch failed:", err);
+      }
+    }
+    sendInitializedNotification() {
+      if (this.initialized) return;
+      this.initialized = true;
+      this.sendToHost({ jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} });
+    }
+    handleIncomingMessage(event) {
+      const data = event.data;
+      if (!data || typeof data !== "object") return;
+      if (event.origin && event.origin !== "null" && !this.hostOrigin) this.hostOrigin = event.origin;
+      if (this.hostOrigin && event.origin && event.origin !== "null" && event.origin !== this.hostOrigin) {
+        console.warn("[MCP Bridge] Rejected message from unverified origin:", event.origin);
+        return;
+      }
+      if (data.id === this.initRequestId && data.result) {
+        this.hostContext = data.result.hostContext || {};
+        this.sendInitializedNotification();
+      }
+      if (data.method === "ui/notifications/tool-result" || data.method === "tools/call_result") {
+        this.sendInitializedNotification();
+        this.processToolPayload(data.params?.result || data.params || data.result);
+      }
+      if (data.result && (data.result.content || data.result._meta)) {
+        this.sendInitializedNotification();
+        this.processToolPayload(data.result);
+      }
+      if (data.method === "ui/notifications/host-context-changed") this.hostContext = data.params || {};
+      if (data.method === "ping" && event.source && data.id) {
+        this.sendInitializedNotification();
+        event.source.postMessage({ jsonrpc: "2.0", id: data.id, result: {} }, event.origin || "*");
+      }
+    }
+    processToolPayload(payload) {
+      if (!payload) return;
+      try {
+        let rawText = "";
+        if (Array.isArray(payload.content)) {
+          for (const item of payload.content) if (item.type === "text" && item.text) rawText += item.text;
+        } else if (typeof payload.text === "string") {
+          rawText = payload.text;
+        } else if (typeof payload === "string") {
+          rawText = payload;
+        }
+        if (rawText.includes("{") && rawText.includes("}")) {
+          const parsed = JSON.parse(rawText.substring(rawText.indexOf("{"), rawText.lastIndexOf("}") + 1));
+          if (this.ontoolresult) this.ontoolresult(parsed);
+        }
+      } catch (e) {
+        console.warn("[MCP Bridge] Error parsing tool result payload:", e);
+      }
+    }
+    updateModelContext(text, metadata = {}) {
+      this.sendToHost({
+        jsonrpc: "2.0",
+        method: "ui/notifications/context-update",
+        params: { content: [{ type: "text", text }], _meta: metadata }
+      });
+    }
+  }
+
+  const mcp = new MCPAppsBridge();
+
+  // ---- game frame lifecycle -------------------------------------------------
+  let gameReady = false;
+  const pendingToolResults = [];
+
+  function sendToGame(data) {
+    if (!gameReady) { pendingToolResults.push(data); return; }
+    frame.contentWindow.postMessage({ type: "doom:tool-result", data }, GAME_ORIGIN);
+  }
+
+  function fail(reason) {
+    panel.classList.remove("hidden");
+    panel.classList.add("failed");
+    statusEl.textContent = "DOOM could not start inside this chat.";
+    reasonEl.textContent = reason;
+    directEl.innerHTML = `Open it directly: <a href="${GAME_ORIGIN}/game" target="_blank" rel="noopener">${GAME_ORIGIN}/game</a>`;
+    mcp.updateModelContext(`[DOOM EVENT: BOOT_FAILED] ${reason} The user can open ${GAME_ORIGIN}/game directly instead.`);
+  }
+
+  const watchdog = setTimeout(() => {
+    if (!gameReady) fail(`The game frame at ${GAME_ORIGIN} did not answer within 25 s. The host may not allow nested frames from that origin (frame-src), or the server is unreachable from this browser.`);
+  }, 25000);
+
+  window.addEventListener("message", (event) => {
+    if (!isGameMessage(event)) return;
+    const d = event.data;
+    if (!d || typeof d !== "object") return;
+    switch (d.type) {
+      case "doom:hello":
+        statusEl.textContent = "Engine page loaded, booting DOOM…";
+        break;
+      case "doom:ready":
+        gameReady = true;
+        clearTimeout(watchdog);
+        panel.classList.add("hidden");
+        while (pendingToolResults.length) sendToGame(pendingToolResults.shift());
+        break;
+      case "doom:boot-failed":
+        clearTimeout(watchdog);
+        fail(String(d.message || "unknown error"));
+        break;
+      case "doom:context":
+        mcp.updateModelContext(String(d.text || ""), d.meta || {});
+        break;
+    }
+  });
+
+  mcp.ontoolresult = (data) => sendToGame(data);
+
+  if (!GAME_ORIGIN || GAME_ORIGIN.startsWith("__")) {
+    fail("The server did not substitute its public origin into the shell (DOOM_GAME_ORIGIN). Set PUBLIC_BASE_URL on the server.");
+  } else {
+    frame.src = gameUrl;
+  }
+
+  window.__doomShell = { gameUrl, get gameReady() { return gameReady; }, sendToGame };
+</script>
+</body>
+</html>
