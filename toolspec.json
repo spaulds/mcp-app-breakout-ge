@@ -1,8 +1,8 @@
 {
   "tools": [
     {
-      "name": "launch_breakout",
-      "description": "Launches the retro Atari Breakout game inside the conversation window. Use this when the user mentions playing breakout, starting a game, or wanting to see the interactive breakout app.",
+      "name": "launch_doom",
+      "description": "Launches DOOM (1993, shareware Episode 1: Knee-Deep in the Dead) inside the Gemini Enterprise conversation window. Use this when the user wants to play DOOM, asks 'can it run DOOM?', or wants to see the interactive game.",
       "inputSchema": {
         "type": "object",
         "properties": {},
@@ -10,125 +10,90 @@
       },
       "_meta": {
         "ui": {
-          "resourceUri": "ui://breakout"
+          "resourceUri": "ui://doom"
         }
       }
     },
     {
-      "name": "get_game_config",
-      "description": "Internal tool called by the game UI on load to retrieve starting configurations. Do not invoke this tool directly unless inspecting default settings.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {},
-        "required": []
-      }
-    },
-    {
-      "name": "get_breakout_settings",
-      "description": "Retrieves the current live configuration of your active game session.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {},
-        "required": []
-      }
-    },
-    {
-      "name": "update_game_settings",
-      "description": "Live-updates parameters of the active Breakout game. You can use this to make the game easier or harder based on user request (e.g. widening the paddle, slowing down the ball, adding lives, or enabling AI Autopilot).",
+      "name": "start_new_game",
+      "description": "Starts a fresh game of DOOM on E1M1 at the requested skill level. Works from the title screen or mid-game (the current game is abandoned).",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "paddleSize": {
-            "type": "number",
-            "description": "The width of the paddle in pixels. Default is 120. Set to 200 or 250 to make it wider/easier."
-          },
-          "ballSpeed": {
-            "type": "number",
-            "description": "The speed of the ball. Default is 5. Lower (e.g. 3) makes it slower/easier, higher (e.g. 8) makes it faster/harder."
-          },
-          "lives": {
-            "type": "number",
-            "description": "Total player lives. Default is 3. Set to 5 or 10 to give the player more chances."
-          },
-          "autopilot": {
-            "type": "boolean",
-            "description": "Whether to enable AI Autopilot mode where the paddle automatically tracks the ball."
-          },
-          "godMode": {
-            "type": "boolean",
-            "description": "Enable God Mode where the ball bounces automatically at the bottom of the screen instead of falling out."
+          "skill": {
+            "type": "string",
+            "enum": [
+              "im_too_young_to_die",
+              "hey_not_too_rough",
+              "hurt_me_plenty",
+              "ultra_violence",
+              "nightmare"
+            ],
+            "description": "Difficulty. 'im_too_young_to_die' (easiest), 'hey_not_too_rough', 'hurt_me_plenty' (default), 'ultra_violence', 'nightmare' (monsters respawn, cheats still work in this build)."
           }
         },
         "required": []
+      },
+      "_meta": {
+        "ui": {
+          "resourceUri": "ui://doom"
+        }
       }
     },
     {
-      "name": "modify_breakout_settings",
-      "description": "Allows you to live-adjust gameplay physics and rules. You can make the paddle wider, speed up or slow down the ball, add lives, or turn on autopilot/god mode.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "paddleWidth": {
-            "type": "number",
-            "description": "The width of the paddle in pixels. Default is 120. Set to 200 or 250 to make it wider/easier."
-          },
-          "paddleSize": {
-            "type": "number",
-            "description": "The width of the paddle in pixels. Default is 120. Set to 200 or 250 to make it wider/easier."
-          },
-          "ballSpeed": {
-            "type": "number",
-            "description": "The speed of the ball. Default is 5. Lower (e.g. 3) makes it slower/easier, higher (e.g. 8) makes it faster/harder."
-          },
-          "lives": {
-            "type": "number",
-            "description": "Total player lives. Default is 3. Set to 5 or 10 to give the player more chances."
-          },
-          "autopilot": {
-            "type": "boolean",
-            "description": "Whether to enable AI Autopilot mode where the paddle automatically tracks the ball."
-          },
-          "godMode": {
-            "type": "boolean",
-            "description": "Enable God Mode where the ball bounces automatically at the bottom of the screen instead of falling out."
-          }
-        },
-        "required": []
-      }
-    },
-    {
-      "name": "trigger_game_cheat",
-      "description": "Activates a fun arcade cheat code inside the active game.",
+      "name": "trigger_doom_cheat",
+      "description": "Types a genuine id Software cheat code into the running game. Only works once a level is loaded; if the player is still on the title screen the UI starts a game first.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "cheat": {
             "type": "string",
-            "enum": ["mega_paddle", "laser_paddle", "god_mode", "extra_ball", "slow_ball", "win_level"],
-            "description": "The name of the cheat code to activate. 'mega_paddle' widens the paddle to 220px, 'laser_paddle' equips twin laser blaster cannons to shoot bricks, 'god_mode' makes you invincible, 'extra_ball' adds a life, 'slow_ball' reduces speed, 'win_level' clears the level."
+            "enum": [
+              "god_mode",
+              "all_weapons_and_keys",
+              "all_weapons",
+              "no_clip",
+              "chainsaw",
+              "invulnerability",
+              "berserk",
+              "partial_invisibility",
+              "radiation_suit",
+              "computer_map",
+              "light_amp",
+              "show_position"
+            ],
+            "description": "'god_mode' (iddqd), 'all_weapons_and_keys' (idkfa), 'all_weapons' (idfa), 'no_clip' (idspispopd), 'chainsaw' (idchoppers), 'invulnerability', 'berserk', 'partial_invisibility', 'radiation_suit', 'computer_map', 'light_amp' (the idbehold powerups), 'show_position' (idmypos)."
           }
         },
-        "required": ["cheat"]
+        "required": [
+          "cheat"
+        ]
+      },
+      "_meta": {
+        "ui": {
+          "resourceUri": "ui://doom"
+        }
       }
     },
     {
-      "name": "apply_breakout_cheat",
-      "description": "Triggers special, fun gameplay overrides on your active canvas.",
+      "name": "warp_to_level",
+      "description": "Warps the player to a level in Episode 1 using the idclev cheat. Shareware includes maps 1-9 (E1M9 is the secret level, Military Base).",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "cheatType": {
-            "type": "string",
-            "enum": ["megaPaddle", "laserPaddle", "godMode", "extraBall", "slowBall", "levelBypass"],
-            "description": "The name of the cheat code to activate."
-          },
-          "cheat": {
-            "type": "string",
-            "enum": ["mega_paddle", "laser_paddle", "god_mode", "extra_ball", "slow_ball", "win_level"],
-            "description": "The name of the cheat code to activate."
+          "map": {
+            "type": "number",
+            "description": "Map number within Episode 1, from 1 (Hangar) to 9 (Military Base). Clamped to that range."
           }
         },
-        "required": []
+        "required": [
+          "map"
+        ]
+      },
+      "_meta": {
+        "ui": {
+          "resourceUri": "ui://doom"
+        }
       }
     }
   ]

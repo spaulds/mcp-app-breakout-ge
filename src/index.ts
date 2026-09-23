@@ -12,11 +12,14 @@ import {
   ListResourcesRequestSchema,
   ReadResourceRequestSchema
 } from "@modelcontextprotocol/sdk/types.js";
+import { TOOL_DEFINITIONS, RESOURCE_DEFINITIONS, DOOM_RESOURCE_URI, executeToolCall } from "./tools.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
+// Cloud Run / gateways terminate TLS in front of us; trust X-Forwarded-* so req.protocol is right.
+app.set("trust proxy", true);
 
 // --- Security & CORS Configuration ---
 const allowedOrigins = process.env.CORS_ORIGIN || "*";
@@ -34,28 +37,98 @@ app.use((_req: Request, res: Response, next: NextFunction) => {
 app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-// --- In-Memory HTML Cache ---
-function loadGameHtml(): string {
-  const pathsToTry = [
-    path.join(__dirname, "game/index.html"),
-    path.join(__dirname, "../src/game/index.html"),
-    path.join(process.cwd(), "src/game/index.html"),
-    path.join(process.cwd(), "dist/game/index.html")
-  ];
-
-  for (const p of pathsToTry) {
-    if (fs.existsSync(p)) {
-      const content = fs.readFileSync(p, "utf-8");
-      console.log(`[STARTUP] Pre-cached Breakout Game HTML from: ${p} (${content.length} chars)`);
-      return content;
-    }
+// --- In-Memory Asset Cache ---
+// Three assets:
+//   shell.html    -> served as the ui://doom MCP resource (a few KB). It only owns the MCP Apps
+//                    bridge and nests /game in an iframe. Hosts build the sandbox CSP from the spec
+//                    template, which has no 'wasm-unsafe-eval', so WebAssembly cannot run in the
+//                    resource itself. It CAN run in a nested frame from our origin (frameDomains).
+//   index.html    -> the real game page, served at /game.
+//   doom.wasm.gz  -> linuxdoom-1.10 + shareware IWAD, fetched by /game from /doom.wasm.gz.
+function firstExisting(candidates: string[]): string | null {
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
   }
-
-  console.error("[STARTUP ERROR] Breakout Game HTML not found! Using fallback shell.");
-  return `<!DOCTYPE html><html><body style="background:#000;color:#fff;font-family:sans-serif;text-align:center;padding:2rem;"><h2>Retro Breakout Game</h2><p>Game asset loaded in fallback mode.</p></body></html>`;
+  return null;
 }
 
-const CACHED_GAME_HTML = loadGameHtml();
+function assetPath(name: string): string | null {
+  return firstExisting([
+    path.join(__dirname, "game", name),
+    path.join(__dirname, "../src/game", name),
+    path.join(process.cwd(), "src/game", name),
+    path.join(process.cwd(), "dist/game", name)
+  ]);
+}
+
+function loadTextAsset(name: string, fallback: string): string {
+  const p = assetPath(name);
+  if (!p) {
+    console.error(`[STARTUP ERROR] ${name} not found. Run npm run build.`);
+    return fallback;
+  }
+  const text = fs.readFileSync(p, "utf-8");
+  console.log(`[STARTUP] Loaded ${name} from ${p} (${text.length} chars)`);
+  return text;
+}
+
+const MISSING_HTML = `<!DOCTYPE html><html><body style="background:#000;color:#fff;font-family:sans-serif;text-align:center;padding:2rem;"><h2>DOOM</h2><p>Game assets missing. Run <code>npm run build</code>.</p></body></html>`;
+const CACHED_GAME_HTML = loadTextAsset("index.html", MISSING_HTML);
+const CACHED_SHELL_HTML = loadTextAsset("shell.html", MISSING_HTML);
+const WASM_GZ_PATH = assetPath("doom.wasm.gz");
+const CACHED_WASM_GZ: Buffer = WASM_GZ_PATH ? fs.readFileSync(WASM_GZ_PATH) : Buffer.alloc(0);
+if (!WASM_GZ_PATH) console.error("[STARTUP ERROR] doom.wasm.gz not found; /doom.wasm.gz will 404 and the game cannot boot.");
+else console.log(`[STARTUP] Loaded doom.wasm.gz (${CACHED_WASM_GZ.length} bytes)`);
+
+/** Public origin of this server as browsers see it (PUBLIC_BASE_URL overrides header sniffing). */
+function publicOrigin(req?: Request): string {
+  if (process.env.PUBLIC_BASE_URL) return process.env.PUBLIC_BASE_URL.replace(/\/$/, "");
+  if (req && req.get("host")) return `${req.protocol}://${req.get("host")}`;
+  return `http://localhost:${process.env.PORT || 8080}`;
+}
+
+/** Extract ?player= from a ui://doom?player=... URI, falling back to the session's player. */
+function playerFromUri(uri: string): string {
+  const match = uri.match(/[?&]player=([^&]+)/);
+  if (match) {
+    try { return decodeURIComponent(match[1]); } catch (e) { /* ignore */ }
+  }
+  return currentActivePlayer || "Player 1";
+}
+
+/** CSP the host must grant so the shell can nest /game from this origin. */
+function uiCsp(origin: string) {
+  return { frameDomains: [origin], connectDomains: [origin], resourceDomains: [origin] };
+}
+
+/** resources/list entries with the CSP attached (spec: meta may live on the listing and/or the content). */
+function resourceDefinitionsFor(origin: string) {
+  return RESOURCE_DEFINITIONS.map((r) => ({ ...r, _meta: { ui: { csp: uiCsp(origin), prefersBorder: false } } }));
+}
+
+/** tools/list entries with the CSP mirrored into _meta.ui as well, for hosts that only look there. */
+function toolDefinitionsFor(origin: string) {
+  return TOOL_DEFINITIONS.map((t: any) => t._meta?.ui ? { ...t, _meta: { ...t._meta, ui: { ...t._meta.ui, csp: uiCsp(origin) } } } : t);
+}
+
+/** Build the resources/read content item for ui://doom, including the CSP the host must grant. */
+function uiResourceContent(uri: string, origin: string, player: string) {
+  const html = CACHED_SHELL_HTML
+    .replace('window.INITIAL_PLAYER_NAME = "Player 1";', `window.INITIAL_PLAYER_NAME = ${JSON.stringify(player)};`)
+    .replace('window.DOOM_GAME_ORIGIN = "__DOOM_GAME_ORIGIN__";', `window.DOOM_GAME_ORIGIN = ${JSON.stringify(origin)};`);
+  return {
+    uri,
+    mimeType: "text/html;profile=mcp-app",
+    text: html,
+    _meta: {
+      ui: {
+        csp: uiCsp(origin),
+        prefersBorder: false
+      }
+    }
+  };
+}
+
 let currentActivePlayer = "Player 1";
 
 // --- Standards-Compliant Cloud-Agnostic OAuth 2.0 Store ---
@@ -131,308 +204,12 @@ function authenticateRequest(req: Request): { authenticated: boolean; error?: st
   return { authenticated: true, client: "custom-auth", playerName: currentActivePlayer };
 }
 
-// --- Tool & Resource Definitions ---
-const TOOL_DEFINITIONS = [
-  {
-    name: "launch_breakout",
-    description: "Launches the retro Atari Breakout game inside the Gemini Enterprise conversation window. Use this when the user mentions playing breakout, starting a game, or wanting to see the interactive arcade game.",
-    inputSchema: {
-      type: "object",
-      properties: {},
-      required: []
-    },
-    _meta: {
-      ui: {
-        resourceUri: "ui://breakout"
-      }
-    }
-  },
-  {
-    name: "get_game_config",
-    description: "Internal tool called by the game UI on load to retrieve starting configurations. Do not invoke this tool directly unless inspecting default settings.",
-    inputSchema: {
-      type: "object",
-      properties: {},
-      required: []
-    }
-  },
-  {
-    name: "get_breakout_settings",
-    description: "Retrieves the current live configuration of your active game session.",
-    inputSchema: {
-      type: "object",
-      properties: {},
-      required: []
-    }
-  },
-  {
-    name: "update_game_settings",
-    description: "Live-updates parameters of the active Breakout game. You can use this to make the game easier or harder based on user request (e.g. widening the paddle, slowing down the ball, adding lives, or enabling AI Autopilot).",
-    inputSchema: {
-      type: "object",
-      properties: {
-        paddleSize: {
-          type: "number",
-          description: "The width of the paddle in pixels. Default is 120. Clamped between 40 and 350."
-        },
-        ballSpeed: {
-          type: "number",
-          description: "The speed of the ball. Default is 5.5. Clamped between 1.0 and 15.0."
-        },
-        lives: {
-          type: "number",
-          description: "Total player lives. Default is 3. Clamped between 1 and 20."
-        },
-        autopilot: {
-          type: "boolean",
-          description: "Whether to enable AI Autopilot mode where the paddle automatically tracks the ball."
-        },
-        godMode: {
-          type: "boolean",
-          description: "Enable God Mode where the ball bounces automatically at the bottom of the screen instead of falling out."
-        }
-      },
-      required: []
-    }
-  },
-  {
-    name: "modify_breakout_settings",
-    description: "Allows you to live-adjust gameplay physics and rules. You can make the paddle wider, speed up or slow down the ball, add lives, or turn on autopilot/god mode.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        paddleWidth: {
-          type: "number",
-          description: "The width of the paddle in pixels. Default is 120. Clamped between 40 and 350."
-        },
-        paddleSize: {
-          type: "number",
-          description: "The width of the paddle in pixels. Default is 120. Clamped between 40 and 350."
-        },
-        ballSpeed: {
-          type: "number",
-          description: "The speed of the ball. Default is 5.5. Clamped between 1.0 and 15.0."
-        },
-        lives: {
-          type: "number",
-          description: "Total player lives. Default is 3. Clamped between 1 and 20."
-        },
-        autopilot: {
-          type: "boolean",
-          description: "Whether to enable AI Autopilot mode where the paddle automatically tracks the ball."
-        },
-        godMode: {
-          type: "boolean",
-          description: "Enable God Mode where the ball bounces automatically at the bottom of the screen instead of falling out."
-        }
-      },
-      required: []
-    }
-  },
-  {
-    name: "trigger_game_cheat",
-    description: "Activates a fun arcade cheat code inside the active game.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        cheat: {
-          type: "string",
-          enum: ["mega_paddle", "laser_paddle", "god_mode", "extra_ball", "slow_ball", "win_level"],
-          description: "The name of the cheat code to activate. 'mega_paddle' widens the paddle to 220px, 'laser_paddle' equips twin laser blaster cannons to shoot bricks, 'god_mode' makes you invincible, 'extra_ball' adds a life, 'slow_ball' reduces speed, 'win_level' instantly clears the level."
-        }
-      },
-      required: ["cheat"]
-    }
-  },
-  {
-    name: "apply_breakout_cheat",
-    description: "Triggers special, fun gameplay overrides on your active canvas.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        cheatType: {
-          type: "string",
-          enum: ["megaPaddle", "laserPaddle", "godMode", "extraBall", "slowBall", "levelBypass"],
-          description: "The name of the cheat code to activate."
-        },
-        cheat: {
-          type: "string",
-          enum: ["mega_paddle", "laser_paddle", "god_mode", "extra_ball", "slow_ball", "win_level"],
-          description: "The name of the cheat code to activate."
-        }
-      },
-      required: []
-    }
-  }
-];
-
-const RESOURCE_DEFINITIONS = [
-  {
-    uri: "ui://breakout",
-    name: "Retro Breakout Game",
-    description: "An interactive, retro Atari-style Breakout arcade game with color particle explosions and AI autopilot mode.",
-    mimeType: "text/html;profile=mcp-app"
-  }
-];
-
-// --- Core Tool Execution Logic with Parameter Bounds & Sanitization ---
-function executeToolCall(name: string, args: any, sessionPlayerName?: string) {
-  const playerName = sessionPlayerName || args?.playerName || currentActivePlayer || "Player 1";
-  currentActivePlayer = playerName;
-  console.log(`[TOOL CALL] Executing tool: ${name} for player: ${playerName}`);
-
-  if (name === "launch_breakout" || name === "get_breakout_game" || name === "launch_game") {
-    const greeting = (playerName && playerName !== "Player 1") ? `Welcome ${playerName}! ` : "";
-    return {
-      content: [
-        {
-          type: "text",
-          text: `${greeting}I have initialized the Retro Breakout Game! The interactive Atari Breakout canvas is loaded directly into your chat window below. Control the paddle using your Left and Right arrow keys or touch swipe, or ask me to turn on AI Autopilot or adjust settings for you!`
-        }
-      ],
-      isError: false,
-      _meta: {
-        ui: {
-          resourceUri: (playerName && playerName !== "Player 1")
-            ? `ui://breakout?player=${encodeURIComponent(playerName)}`
-            : "ui://breakout"
-        }
-      }
-    };
-  }
-
-  if (name === "get_game_config" || name === "get_breakout_settings") {
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({
-            status: "success",
-            settings: {
-              paddleSize: 120,
-              ballSpeed: 5.5,
-              lives: 3,
-              autopilot: false,
-              godMode: false
-            }
-          })
-        }
-      ],
-      isError: false,
-      _meta: {
-        ui: {
-          resourceUri: "ui://breakout"
-        }
-      }
-    };
-  }
-
-  if (name === "update_game_settings" || name === "modify_breakout_settings") {
-    const settings: Record<string, any> = {};
-    const paddleValue = args?.paddleSize !== undefined ? Number(args.paddleSize) : (args?.paddleWidth !== undefined ? Number(args.paddleWidth) : undefined);
-    
-    // Explicit parameter bounding & validation
-    if (paddleValue !== undefined && !isNaN(paddleValue)) {
-      settings.paddleSize = Math.max(40, Math.min(350, Math.round(paddleValue)));
-    }
-    if (args?.ballSpeed !== undefined) {
-      const speed = Number(args.ballSpeed);
-      if (!isNaN(speed)) {
-        settings.ballSpeed = Math.max(1.0, Math.min(15.0, Number(speed.toFixed(1))));
-      }
-    }
-    if (args?.lives !== undefined) {
-      const lives = Number(args.lives);
-      if (!isNaN(lives)) {
-        settings.lives = Math.max(1, Math.min(20, Math.floor(lives)));
-      }
-    }
-    if (args?.autopilot !== undefined) settings.autopilot = Boolean(args.autopilot);
-    if (args?.godMode !== undefined) settings.godMode = Boolean(args.godMode);
-
-    const summaryParts = [];
-    if (settings.paddleSize !== undefined) summaryParts.push(`paddle size to ${settings.paddleSize}px`);
-    if (settings.ballSpeed !== undefined) summaryParts.push(`ball speed to ${settings.ballSpeed}`);
-    if (settings.lives !== undefined) summaryParts.push(`lives config to ${settings.lives}`);
-    if (settings.autopilot !== undefined) summaryParts.push(`AI autopilot to ${settings.autopilot ? "ON" : "OFF"}`);
-    if (settings.godMode !== undefined) summaryParts.push(`God Mode to ${settings.godMode ? "ON" : "OFF"}`);
-
-    const textSummary = summaryParts.length > 0 
-      ? `Successfully updated game settings: ${summaryParts.join(", ")}.`
-      : "No settings changes requested.";
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({
-            status: "success",
-            message: textSummary,
-            settings: settings
-          })
-        }
-      ],
-      isError: false,
-      _meta: {
-        ui: {
-          resourceUri: "ui://breakout"
-        }
-      }
-    };
-  }
-
-  if (name === "trigger_game_cheat" || name === "apply_breakout_cheat") {
-    let cheat = (args?.cheat || args?.cheatType) as string;
-
-    if (cheat === "godMode") cheat = "god_mode";
-    if (cheat === "extraBall") cheat = "extra_ball";
-    if (cheat === "slowBall") cheat = "slow_ball";
-    if (cheat === "megaPaddle") cheat = "mega_paddle";
-    if (cheat === "laserPaddle") cheat = "laser_paddle";
-    if (cheat === "levelBypass") cheat = "win_level";
-
-    const allowedCheats = ["god_mode", "extra_ball", "slow_ball", "mega_paddle", "laser_paddle", "win_level"];
-    if (!allowedCheats.includes(cheat)) {
-      throw new Error(`Invalid cheat code: '${cheat}'. Allowed cheats: ${allowedCheats.join(", ")}`);
-    }
-
-    let desc = "";
-    if (cheat === "god_mode") desc = "Invincibility (God Mode) enabled! The ball bounces safely on the screen bottom.";
-    if (cheat === "extra_ball") desc = "One extra life awarded!";
-    if (cheat === "slow_ball") desc = "Ball speed decreased for easy tracking.";
-    if (cheat === "mega_paddle") desc = "Mega Paddle activated! Paddle widened to 220px.";
-    if (cheat === "laser_paddle") desc = "Laser Cannons equipped! Twin blaster turrets shoot lasers on click/space to destroy bricks.";
-    if (cheat === "win_level") desc = "Current level cleared!";
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({
-            status: "success",
-            message: `Cheat code triggered: ${desc}`,
-            cheatApplied: cheat
-          })
-        }
-      ],
-      isError: false,
-      _meta: {
-        ui: {
-          resourceUri: "ui://breakout"
-        }
-      }
-    };
-  }
-
-  throw new Error(`Tool not found: ${name}`);
-}
-
 // --- Factory to create fresh MCP SDK Server instances per SSE connection ---
-function createMcpServerInstance(): Server {
+function createMcpServerInstance(origin: string): Server {
   const s = new Server(
     {
-      name: "retro-breakout-server",
-      version: "1.2.0"
+      name: "doom-mcp-server",
+      version: "2.0.0"
     },
     {
       capabilities: {
@@ -443,36 +220,19 @@ function createMcpServerInstance(): Server {
   );
 
   s.setRequestHandler(ListResourcesRequestSchema, async () => {
-    return { resources: RESOURCE_DEFINITIONS };
+    return { resources: resourceDefinitionsFor(origin) };
   });
 
   s.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     console.log(`[RESOURCE READ] Client is reading resource: ${request.params.uri}`);
-    if (request.params.uri === "ui://breakout" || request.params.uri.startsWith("ui://breakout")) {
-      let reqPlayer = currentActivePlayer || "Player 1";
-      const match = request.params.uri.match(/[?&]player=([^&]+)/);
-      if (match) {
-        try { reqPlayer = decodeURIComponent(match[1]); } catch(e) {}
-      }
-      const customHtml = CACHED_GAME_HTML.replace(
-        'window.INITIAL_PLAYER_NAME = "Player 1";',
-        `window.INITIAL_PLAYER_NAME = ${JSON.stringify(reqPlayer)};`
-      );
-      return {
-        contents: [
-          {
-            uri: request.params.uri,
-            mimeType: "text/html;profile=mcp-app",
-            text: customHtml
-          }
-        ]
-      };
+    if (request.params.uri === DOOM_RESOURCE_URI || request.params.uri.startsWith(DOOM_RESOURCE_URI)) {
+      return { contents: [uiResourceContent(request.params.uri, origin, playerFromUri(request.params.uri))] };
     }
     throw new Error(`Resource not found: ${request.params.uri}`);
   });
 
   s.setRequestHandler(ListToolsRequestSchema, async () => {
-    return { tools: TOOL_DEFINITIONS };
+    return { tools: toolDefinitionsFor(origin) };
   });
 
   s.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -498,8 +258,8 @@ app.get("/mcp", async (req: Request, res: Response) => {
   // If a standard web browser loads /mcp in the address bar (Accept: text/html), return status UI instead of raw SSE
   if (req.accepts("html") && !req.headers.accept?.includes("text/event-stream")) {
     res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.send(`<!DOCTYPE html><html><head><title>Breakout MCP Server</title></head><body style="background:#0f172a;color:#f8fafc;font-family:system-ui,sans-serif;padding:3rem;line-height:1.6;">
-      <h1 style="color:#38bdf8;">🕹️ Retro Breakout MCP Server</h1>
+    res.send(`<!DOCTYPE html><html><head><title>DOOM MCP Server</title></head><body style="background:#0f172a;color:#f8fafc;font-family:system-ui,sans-serif;padding:3rem;line-height:1.6;">
+      <h1 style="color:#38bdf8;">👹 DOOM MCP Server</h1>
       <p style="color:#94a3b8;">Server is healthy and ready for Gemini Enterprise, Agent Gateway, Claude, or any MCP client.</p>
       <div style="background:#1e293b;padding:1.5rem;border-radius:8px;margin-top:1rem;">
         <p><strong>Protocol:</strong> Model Context Protocol (MCP Apps)</p>
@@ -507,7 +267,7 @@ app.get("/mcp", async (req: Request, res: Response) => {
         <p><strong>MCP SSE Endpoint:</strong> <code>GET /mcp</code></p>
         <p><strong>OAuth 2.0 Auth Endpoint:</strong> <code>GET /authorize</code></p>
         <p><strong>OAuth 2.0 Token Endpoint:</strong> <code>POST /token</code></p>
-        <p><strong>UI Resource URI:</strong> <code>ui://breakout</code></p>
+        <p><strong>UI Resource URI:</strong> <code>ui://doom</code></p>
       </div>
       <p style="margin-top:1.5rem;"><a href="/game" style="color:#38bdf8;text-decoration:underline;">Open Direct Game Preview &rarr;</a></p>
     </body></html>`);
@@ -543,7 +303,7 @@ app.get("/mcp", async (req: Request, res: Response) => {
   };
 
   try {
-    const sseServer = createMcpServerInstance();
+    const sseServer = createMcpServerInstance(publicOrigin(req));
     await sseServer.connect(transport);
   } catch (err) {
     console.error(`[SSE ERROR] Error connecting transport for session ${sessionId}:`, err);
@@ -605,8 +365,8 @@ app.post("/mcp", async (req: Request, res: Response) => {
             resources: {}
           },
           serverInfo: {
-            name: "retro-breakout-server",
-            version: "1.2.0"
+            name: "doom-mcp-server",
+            version: "2.0.0"
           }
         };
         break;
@@ -630,34 +390,17 @@ app.post("/mcp", async (req: Request, res: Response) => {
         return;
 
       case "tools/list":
-        result = { tools: TOOL_DEFINITIONS };
+        result = { tools: toolDefinitionsFor(publicOrigin(req)) };
         break;
 
       case "resources/list":
-        result = { resources: RESOURCE_DEFINITIONS };
+        result = { resources: resourceDefinitionsFor(publicOrigin(req)) };
         break;
 
       case "resources/read":
         const targetUri = params?.uri || params?.resourceUri || "";
-        if (targetUri && (targetUri === "ui://breakout" || targetUri.startsWith("ui://breakout"))) {
-          let reqPlayer = currentActivePlayer || "Player 1";
-          const match = targetUri.match(/[?&]player=([^&]+)/);
-          if (match) {
-            try { reqPlayer = decodeURIComponent(match[1]); } catch(e) {}
-          }
-          const customHtml = CACHED_GAME_HTML.replace(
-            'window.INITIAL_PLAYER_NAME = "Player 1";',
-            `window.INITIAL_PLAYER_NAME = ${JSON.stringify(reqPlayer)};`
-          );
-          result = {
-            contents: [
-              {
-                uri: targetUri,
-                mimeType: "text/html;profile=mcp-app",
-                text: customHtml
-              }
-            ]
-          };
+        if (targetUri && (targetUri === DOOM_RESOURCE_URI || targetUri.startsWith(DOOM_RESOURCE_URI))) {
+          result = { contents: [uiResourceContent(targetUri, publicOrigin(req), playerFromUri(targetUri))] };
         } else {
           throw { code: -32602, message: `Resource not found: ${targetUri}` };
         }
@@ -835,26 +578,45 @@ app.post("/token", (req: Request, res: Response) => {
 app.get("/", (_req: Request, res: Response) => {
   res.status(200).json({
     status: "healthy",
-    app: "retro-breakout-mcp-server",
-    version: "1.2.0",
-    cachedHtmlLength: CACHED_GAME_HTML.length,
+    app: "doom-mcp-server",
+    version: "2.0.0",
+    gameHtmlLength: CACHED_GAME_HTML.length,
+    shellHtmlLength: CACHED_SHELL_HTML.length,
+    wasmGzBytes: CACHED_WASM_GZ.length,
     activeSessions: transports.size,
     activeTokens: activeTokens.size,
     authCodes: authCodes.size
   });
 });
 
-// Direct UI preview endpoint for browser verification
+// The real game page. Opened directly for a full-window preview, or nested (?embed=1) by the
+// ui://doom shell that Gemini Enterprise renders in its sandbox.
 app.get("/game", (_req: Request, res: Response) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache");
   res.send(CACHED_GAME_HTML);
+});
+
+// Engine + IWAD, still gzip-compressed; the page inflates it with DecompressionStream.
+app.get("/doom.wasm.gz", (_req: Request, res: Response) => {
+  if (!CACHED_WASM_GZ.length) { res.status(404).send("doom.wasm.gz missing"); return; }
+  res.setHeader("Content-Type", "application/octet-stream");
+  res.setHeader("Content-Length", String(CACHED_WASM_GZ.length));
+  res.setHeader("Cache-Control", "public, max-age=86400");
+  res.send(CACHED_WASM_GZ);
+});
+
+// Convenience: the shell exactly as an MCP host would receive it, for browser testing.
+app.get("/shell", (req: Request, res: Response) => {
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.send(uiResourceContent(DOOM_RESOURCE_URI, publicOrigin(req), String(req.query.player || "Player 1")).text);
 });
 
 // Start Express Server
 const port = process.env.PORT || 8080;
 app.listen(port, () => {
   console.log(`=============================================================`);
-  console.log(`🚀 Retro Breakout MCP Server running on port ${port}`);
+  console.log(`🚀 DOOM MCP Server running on port ${port}`);
   console.log(`🔗 MCP SSE Endpoint: http://localhost:${port}/mcp`);
   console.log(`🔗 MCP Stateless JSON-RPC: http://localhost:${port}/mcp (POST)`);
   console.log(`🔐 OAuth 2.0 Endpoints: /authorize and /token (RFC 7636 PKCE)`);

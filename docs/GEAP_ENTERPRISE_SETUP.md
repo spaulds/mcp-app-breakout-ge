@@ -1,6 +1,6 @@
 # 🛡️ Gemini Enterprise Agent Platform (GEAP) — Enterprise Setup Guide
 
-This guide provides step-by-step instructions for deploying, securing, registering, and connecting the **Retro Breakout MCP App** within the **Gemini Enterprise Agent Platform (GEAP)** ecosystem on Google Cloud.
+This guide provides step-by-step instructions for deploying, securing, registering, and connecting the **DOOM MCP App** within the **Gemini Enterprise Agent Platform (GEAP)** ecosystem on Google Cloud.
 
 ---
 
@@ -23,22 +23,23 @@ sequenceDiagram
 
     Note over GE,REG: 1. Dynamic Tool Discovery
     GE->>REG: Discover MCP Tools & UI Spec via Gateway
-    REG-->>GE: Tool definitions + UI resource (ui://breakout)
+    REG-->>GE: Tool definitions + UI resource (ui://doom)
 
     Note over User,GE: 2. Interactive Request
-    User->>GE: "Let's play Atari Breakout!"
+    User->>GE: "Let's play DOOM!"
 
     Note over GE,AGW: 3. Governed Zero-Trust Egress
     GE->>AGW: mTLS (SPIFFE Identity: principal://agents...)
     Note over AGW: • Validates Agent Identity<br/>• Enforces AuthzPolicy<br/>• Model Armor sanitizes payloads
-    AGW->>CR: Authenticated POST /mcp (launch_breakout)
-    CR-->>AGW: Result (_meta.ui.resourceUri: "ui://breakout")
+    AGW->>CR: Authenticated POST /mcp (launch_doom)
+    CR-->>AGW: Result (_meta.ui.resourceUri: "ui://doom")
     AGW-->>GE: Forwarded MCP Response
 
     Note over GE,CR: 4. Authenticated Zero-CDN UI Delivery
-    GE->>AGW: resources/read ("ui://breakout")
+    GE->>AGW: resources/read ("ui://doom")
     AGW->>CR: Authenticated POST /mcp (resources/read)
-    CR-->>AGW: Streamed HTML5 Canvas Game Bundle
+    CR-->>AGW: ui://doom shell (~9 KB, declares csp.frameDomains)
+    Note over User,CR: Sandbox nests CR /game, which fetches /doom.wasm.gz
     AGW-->>GE: App Payload Delivered
     GE->>User: Renders Interactive Canvas in Chat!
 ```
@@ -67,9 +68,9 @@ Define your project variables:
 ```bash
 export PROJECT_ID="<YOUR_PROJECT_ID>"
 export REGION="us-central1"
-export SERVICE_NAME="mcp-breakout-arcade"
+export SERVICE_NAME="mcp-doom"
 export GATEWAY_NAME="<YOUR_AGENT_GATEWAY_NAME>"   # e.g. "my-agent-gateway"
-export SERVICE_ID="retro-breakout-service"
+export SERVICE_ID="doom-mcp-service"
 
 # Retrieve numeric project ID
 export PROJECT_NUMBER=$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)')
@@ -173,8 +174,8 @@ SPEC_CONTENT=$(cat toolspec.json)
 gcloud agent-registry services create $SERVICE_ID \
   --project=$PROJECT_ID \
   --location=$REGION \
-  --display-name="Breakout MCP" \
-  --description="Interactive MCP Apps Breakout arcade game with inline HTML/canvas UI rendering, live gameplay parameter controls, and cheat code integrations for Gemini Enterprise." \
+  --display-name="DOOM MCP" \
+  --description="The original 1993 DOOM (shareware Episode 1) running as WebAssembly inside an MCP App, with agent-driven cheat codes and level warps for Gemini Enterprise." \
   --interfaces="[{\"protocolBinding\": \"JSONRPC\", \"url\": \"${CLOUD_RUN_URL}/mcp\"}]" \
   --mcp-server-spec-type=tool-spec \
   --mcp-server-spec-content="$SPEC_CONTENT"
@@ -217,11 +218,11 @@ For production enterprise deployments requiring centralized perimeter policy enf
 1. Ensure Steps 3, 4, and 5 above were completed in the same region (`$REGION`).
 2. Open **Google Cloud Console** &rarr; **Agent Builder (Discovery Engine)** &rarr; **Data Stores** &rarr; **Create Data Store**.
 3. Select **Agent Gateway / MCP Registry**:
-   - The registered **`Breakout MCP`** service will automatically appear in the catalog list.
+   - The registered **`DOOM MCP`** service will automatically appear in the catalog list.
 4. Configure OAuth 2.0 authentication (`${CLOUD_RUN_URL}/authorize` & `${CLOUD_RUN_URL}/token`) with PKCE `S256`.
 5. Verify authentication and attach the Data Store to your Agent.
 6. Navigate to your **Gemini Enterprise Agent** &rarr; **Actions / Tools** tab:
-   - Verify all MCP tools (`launch_breakout`, `update_game_settings`, `trigger_game_cheat`, etc.) and the `ui://breakout` resource are recognized.
+   - Verify all MCP tools (`launch_doom`, `start_new_game`, `trigger_doom_cheat`, `warp_to_level`) and the `ui://doom` resource are recognized.
 7. Save and publish the Agent configuration.
 
 ---
@@ -234,8 +235,8 @@ For rapid prototyping, local development, or standalone demonstrations evaluatin
 2. Click **Create Data Store**.
 3. Select **Custom MCP** (or **Model Context Protocol**).
 4. Configure the connection parameters:
-   - **Data Store ID:** `breakout-mcp-direct`
-   - **Display Name:** `Retro Breakout MCP`
+   - **Data Store ID:** `doom-mcp-direct`
+   - **Display Name:** `DOOM MCP`
    - **MCP Server URL:** `${CLOUD_RUN_URL}/mcp`
    - **Authentication Method:** `OAuth 2.0`
    - **Authorization URL:** `${CLOUD_RUN_URL}/authorize`
@@ -244,12 +245,12 @@ For rapid prototyping, local development, or standalone demonstrations evaluatin
    - **Client Secret:** `secret123` (or any placeholder string)
    - **PKCE Support:** ☑️ **Enabled (`S256`)**
 5. Click **Verify Auth**:
-   - A consent popup window appears requesting access to the Breakout arcade service.
+   - A consent popup window appears requesting access to the DOOM service.
    - Click **Authorize Access**.
 6. Click **Create & Connect**.
 7. Navigate to your **Gemini Enterprise Agent** &rarr; **Actions / Tools** tab:
-   - Click **Add Action** and attach your new `breakout-mcp-direct` data store.
-   - Verify all MCP tools (`launch_breakout`, `update_game_settings`, `trigger_game_cheat`, etc.) are recognized.
+   - Click **Add Action** and attach your new `doom-mcp-direct` data store.
+   - Verify all MCP tools (`launch_doom`, `start_new_game`, `trigger_doom_cheat`, `warp_to_level`) are recognized.
 8. Save and publish the Agent configuration.
 
 > [!TIP]
@@ -263,15 +264,16 @@ For rapid prototyping, local development, or standalone demonstrations evaluatin
 
 1. Open the **Gemini Enterprise Chat** interface.
 2. Type:
-   > *"Let's play a game"* or *"Launch Breakout"*
+   > *"Can it run DOOM?"* or *"Launch DOOM"*
 3. **Observe the Handshake:**
-   - Gemini Enterprise calls `launch_breakout`.
-   - The tool returns `{ _meta: { ui: { resourceUri: "ui://breakout" } } }`.
-   - Gemini Enterprise fetches `resources/read: ui://breakout` over the Agent Gateway.
-   - The sandboxed iframe mounts, performs the 3-way `postMessage` handshake, and renders the retro arcade game directly inside the conversation thread.
+   - Gemini Enterprise calls `launch_doom`.
+   - The tool returns `{ _meta: { ui: { resourceUri: "ui://doom" } } }`.
+   - Gemini Enterprise fetches `resources/read: ui://doom` over the Agent Gateway.
+   - The sandboxed iframe mounts, performs the 3-way `postMessage` handshake, nests the game page from Cloud Run (the sandbox CSP forbids WebAssembly, so the engine must run from the server's own origin), and boots DOOM to its title screen inside the conversation thread.
 4. **Test Live Gameplay Control via Chat:**
-   - *"Equip laser cannons"* &rarr; Agent invokes `trigger_game_cheat(cheat="laser_paddle")`. Twin laser turrets appear on the paddle.
-   - *"Make the paddle wider and slow down the ball"* &rarr; Agent invokes `update_game_settings(paddleSize=220, ballSpeed=3.5)`.
+   - *"Start a game on Ultra-Violence"* &rarr; Agent invokes `start_new_game(skill="ultra_violence")`. The UI drives DOOM's own menu to launch E1M1.
+   - *"Give me god mode"* &rarr; Agent invokes `trigger_doom_cheat(cheat="god_mode")`. The UI types `IDDQD` into the engine; DOOM prints *Degreelessness Mode On*.
+   - *"Take me to the secret level"* &rarr; Agent invokes `warp_to_level(map=9)`. The UI types `IDCLEV19`.
 
 ---
 

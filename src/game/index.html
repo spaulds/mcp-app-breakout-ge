@@ -3,13 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Retro Atari Breakout - MCP App</title>
+  <title>DOOM - MCP App</title>
   <style>
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
 
     html, body {
       width: 100%;
@@ -26,18 +22,18 @@
       -webkit-user-select: none;
     }
 
-    /* Arcade screen cabinet and responsive canvas container */
+    /* Arcade cabinet: DOOM renders 320x200 doubled to 640x400 (16:10) */
     #arcade-cabinet {
       position: relative;
-      border: 3px solid #333333;
+      border: 3px solid #3a1a12;
       background-color: #050505;
       padding: 4px;
-      box-shadow: 0 0 25px rgba(0, 255, 128, 0.2), inset 0 0 15px rgba(0, 0, 0, 0.9);
+      box-shadow: 0 0 25px rgba(255, 60, 20, 0.25), inset 0 0 15px rgba(0, 0, 0, 0.9);
       border-radius: 6px;
       width: 96vw;
       max-width: 800px;
-      height: 82vh;
-      max-height: 560px;
+      aspect-ratio: 8 / 5;
+      max-height: 82vh;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -50,35 +46,56 @@
       background: #000000;
       image-rendering: pixelated;
       image-rendering: crisp-edges;
+      outline: none;
+      cursor: crosshair;
     }
 
-    /* Optimized CRT Scanline & Phosphor Grid Overlay */
     #scanlines {
       position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background: linear-gradient(
-        rgba(18, 16, 16, 0) 50%, 
-        rgba(0, 0, 0, 0.25) 50%
-      ), linear-gradient(
-        90deg,
-        rgba(255, 0, 0, 0.04),
-        rgba(0, 255, 0, 0.02),
-        rgba(0, 0, 255, 0.04)
-      );
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.22) 50%),
+                  linear-gradient(90deg, rgba(255, 0, 0, 0.04), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.04));
       background-size: 100% 4px, 4px 100%;
       pointer-events: none;
       z-index: 10;
-      will-change: transform;
     }
 
-    /* In-App Retro Settings Drawer / Modal */
-    #settings-btn {
+    /* Boot / click-to-play overlay */
+    #boot-overlay {
+      position: absolute;
+      inset: 0;
+      z-index: 20;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      background: radial-gradient(ellipse at center, rgba(60, 0, 0, 0.55), rgba(0, 0, 0, 0.85));
+      cursor: pointer;
+      text-align: center;
+      padding: 20px;
+    }
+    #boot-title {
+      font-size: clamp(28px, 7vw, 56px);
+      font-weight: 900;
+      letter-spacing: 8px;
+      color: #ff3b1f;
+      text-shadow: 0 0 18px rgba(255, 59, 31, 0.8), 2px 2px 0 #5a0000;
+    }
+    #boot-sub { font-size: 12px; color: #ddd; letter-spacing: 2px; text-transform: uppercase; }
+    #boot-status { font-size: 12px; color: #ffb347; letter-spacing: 1px; min-height: 16px; }
+    #boot-bar { width: 60%; max-width: 320px; height: 6px; background: #222; border: 1px solid #552; }
+    #boot-bar > div { height: 100%; width: 0%; background: linear-gradient(90deg, #ff3b1f, #ffb347); transition: width 0.2s; }
+    #boot-overlay.ready #boot-bar { display: none; }
+    #boot-overlay.ready #boot-status { color: #00ff66; font-weight: bold; animation: blink 1.1s steps(2, start) infinite; }
+    @keyframes blink { to { visibility: hidden; } }
+
+    /* Console drawer (the in-app twin of the MCP tools) */
+    #console-btn {
       background: #181818;
-      border: 1px solid #00ff66;
-      color: #00ff66;
+      border: 1px solid #ff3b1f;
+      color: #ff3b1f;
       padding: 4px 10px;
       font-size: 11px;
       font-family: inherit;
@@ -87,24 +104,14 @@
       letter-spacing: 1px;
       font-weight: bold;
       transition: all 0.2s ease;
-      display: inline-flex;
-      align-items: center;
-      box-shadow: 0 0 8px rgba(0, 255, 102, 0.15);
+      box-shadow: 0 0 8px rgba(255, 59, 31, 0.15);
       flex-shrink: 0;
     }
+    #console-btn:hover { background: #ff3b1f; color: #000; box-shadow: 0 0 12px #ff3b1f; }
 
-    #settings-btn:hover {
-      background: #00ff66;
-      color: #000;
-      box-shadow: 0 0 12px #00ff66;
-    }
-
-    #settings-modal {
+    #console-modal {
       position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
+      inset: 0;
       background: rgba(0, 0, 0, 0.88);
       z-index: 30;
       display: none;
@@ -114,110 +121,57 @@
       padding: 20px;
       backdrop-filter: blur(3px);
     }
-
-    .settings-panel {
+    .console-panel {
       background: #0a0a0a;
-      border: 2px solid #00ff66;
-      box-shadow: 0 0 20px rgba(0, 255, 102, 0.3);
-      padding: 18px 24px;
+      border: 2px solid #ff3b1f;
+      box-shadow: 0 0 20px rgba(255, 59, 31, 0.3);
+      padding: 16px 22px;
       border-radius: 6px;
-      width: 90%;
-      max-width: 440px;
+      width: 92%;
+      max-width: 480px;
+      max-height: 100%;
+      overflow-y: auto;
     }
-
-    .settings-title {
-      color: #00ff66;
-      font-size: 18px;
+    .console-title {
+      color: #ff3b1f;
+      font-size: 17px;
       font-weight: bold;
       text-align: center;
-      margin-bottom: 14px;
+      margin-bottom: 12px;
       letter-spacing: 2px;
       border-bottom: 1px solid #222;
       padding-bottom: 8px;
     }
-
-    .setting-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 12px;
-      font-size: 12px;
-    }
-
-    .setting-label {
-      color: #ddd;
-      font-weight: bold;
-      letter-spacing: 1px;
-    }
-
-    .setting-val {
-      color: #00ccff;
-      font-weight: bold;
-      margin-left: 8px;
-      min-width: 45px;
-      text-align: right;
-    }
-
-    .slider {
+    .section-label { font-size: 10px; color: #888; margin: 10px 0 6px; letter-spacing: 1px; text-transform: uppercase; }
+    .row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+    select {
       flex: 1;
-      margin: 0 10px;
-      accent-color: #00ff66;
-      cursor: pointer;
-    }
-
-    .btn-toggle {
-      background: #1a1a1a;
-      border: 1px solid #555;
-      color: #888;
-      padding: 4px 10px;
-      border-radius: 3px;
+      background: #151515;
+      color: #ffb347;
+      border: 1px solid #553;
       font-family: inherit;
-      font-size: 11px;
-      font-weight: bold;
-      cursor: pointer;
+      font-size: 12px;
+      padding: 5px;
     }
-
-    .btn-toggle.active {
-      background: #00ff66;
-      color: #000;
-      border-color: #00ff66;
-      box-shadow: 0 0 8px #00ff66;
-    }
-
-    .cheats-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 8px;
-      margin-top: 10px;
-      margin-bottom: 14px;
-    }
-
-    .cheat-btn {
+    .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+    .grid.warp { grid-template-columns: repeat(9, 1fr); }
+    .cheat-btn, .warp-btn {
       background: #151515;
       border: 1px solid #ff007f;
       color: #ff007f;
-      padding: 6px;
+      padding: 6px 4px;
       font-family: inherit;
-      font-size: 11px;
+      font-size: 10px;
       font-weight: bold;
       border-radius: 3px;
       cursor: pointer;
       text-align: center;
-      transition: all 0.2s;
+      transition: all 0.15s;
     }
-
-    .cheat-btn:hover {
-      background: #ff007f;
-      color: #fff;
-      box-shadow: 0 0 10px #ff007f;
-    }
-
-    .action-row {
-      display: flex;
-      gap: 10px;
-      margin-top: 10px;
-    }
-
+    .warp-btn { border-color: #00ccff; color: #00ccff; }
+    .cheat-btn:hover { background: #ff007f; color: #fff; }
+    .warp-btn:hover { background: #00ccff; color: #000; }
+    .action-row { display: flex; gap: 10px; margin-top: 12px; }
     .btn-action {
       flex: 1;
       padding: 8px;
@@ -228,20 +182,10 @@
       cursor: pointer;
       text-align: center;
     }
+    .btn-resume { background: #00ff66; color: #000; border: 1px solid #00ff66; }
+    .btn-newgame { background: #222; color: #ff3b1f; border: 1px solid #ff3b1f; }
 
-    .btn-close {
-      background: #00ff66;
-      color: #000;
-      border: 1px solid #00ff66;
-    }
-
-    .btn-restart {
-      background: #222;
-      color: #ff0040;
-      border: 1px solid #ff0040;
-    }
-
-    /* Controls tip & status bar */
+    /* Status bar */
     #controls-tip {
       margin-top: 8px;
       font-size: 11px;
@@ -257,14 +201,7 @@
       flex-wrap: wrap;
       gap: 8px;
     }
-
-    .controls-left {
-      display: flex;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: 6px;
-    }
-
+    .controls-left { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
     .badge {
       display: inline-block;
       padding: 2px 6px;
@@ -272,58 +209,66 @@
       font-size: 10px;
       font-weight: bold;
       background: #222222;
-      color: #00ff66;
-      border: 1px solid #00ff66;
-      margin-left: 6px;
+      color: #ffb347;
+      border: 1px solid #ffb347;
     }
+    .badge.god { color: #ffd700; border-color: #ffd700; }
+    .badge.noclip { color: #00ccff; border-color: #00ccff; }
+    .badge.player { color: #00ff66; border-color: #00ff66; }
   </style>
 </head>
 <body>
 
   <div id="arcade-cabinet">
     <div id="scanlines"></div>
-    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <canvas id="screen" width="640" height="400" tabindex="0">DOOM renders here.</canvas>
 
-    <!-- In-App Settings Drawer -->
-    <div id="settings-modal">
-      <div class="settings-panel">
-        <div class="settings-title">🕹️ ARCADE SETTINGS</div>
-        
-        <div class="setting-row">
-          <span class="setting-label">PADDLE:</span>
-          <input type="range" id="paddle-slider" class="slider" min="80" max="250" value="120">
-          <span id="paddle-val" class="setting-val">120px</span>
+    <div id="boot-overlay">
+      <div id="boot-title">DOOM</div>
+      <div id="boot-sub">Knee-Deep in the Dead &bull; linuxdoom-1.10 &bull; WebAssembly</div>
+      <div id="boot-bar"><div id="boot-bar-fill"></div></div>
+      <div id="boot-status">Decoding embedded IWAD...</div>
+    </div>
+
+    <div id="console-modal">
+      <div class="console-panel">
+        <div class="console-title">&#128127; DOOM CONSOLE</div>
+
+        <div class="section-label">New game (E1M1: Hangar)</div>
+        <div class="row">
+          <select id="skill-select">
+            <option value="0">I'm too young to die</option>
+            <option value="1">Hey, not too rough</option>
+            <option value="2" selected>Hurt me plenty</option>
+            <option value="3">Ultra-Violence</option>
+            <option value="4">Nightmare!</option>
+          </select>
+          <button id="btn-newgame" class="btn-action btn-newgame" style="flex:0 0 auto;">&#9654; NEW GAME</button>
         </div>
 
-        <div class="setting-row">
-          <span class="setting-label">SPEED:</span>
-          <input type="range" id="speed-slider" class="slider" min="3" max="9" step="0.5" value="5.5">
-          <span id="speed-val" class="setting-val">5.5</span>
+        <div class="section-label">Cheats (typed into the engine)</div>
+        <div class="grid" id="cheat-grid">
+          <button class="cheat-btn" data-cheat="god_mode" data-code="iddqd">&#128737; IDDQD</button>
+          <button class="cheat-btn" data-cheat="all_weapons_and_keys" data-code="idkfa">&#128299; IDKFA</button>
+          <button class="cheat-btn" data-cheat="all_weapons" data-code="idfa">&#128163; IDFA</button>
+          <button class="cheat-btn" data-cheat="no_clip" data-code="idspispopd">&#128123; NOCLIP</button>
+          <button class="cheat-btn" data-cheat="chainsaw" data-code="idchoppers">&#129683; CHAINSAW</button>
+          <button class="cheat-btn" data-cheat="invulnerability" data-code="idbeholdv">&#128142; INVULN</button>
+          <button class="cheat-btn" data-cheat="berserk" data-code="idbeholds">&#128074; BERSERK</button>
+          <button class="cheat-btn" data-cheat="partial_invisibility" data-code="idbeholdi">&#128065; INVIS</button>
+          <button class="cheat-btn" data-cheat="radiation_suit" data-code="idbeholdr">&#9762; RAD SUIT</button>
+          <button class="cheat-btn" data-cheat="computer_map" data-code="idbeholda">&#128506; MAP</button>
+          <button class="cheat-btn" data-cheat="light_amp" data-code="idbeholdl">&#128161; LIGHT AMP</button>
+          <button class="cheat-btn" data-cheat="show_position" data-code="idmypos">&#128205; MYPOS</button>
         </div>
 
-        <div class="setting-row">
-          <span class="setting-label">AI AUTOPILOT:</span>
-          <button id="toggle-autopilot" class="btn-toggle">OFF</button>
-        </div>
+        <div class="section-label">Warp (IDCLEV) &mdash; Episode 1</div>
+        <div class="grid warp" id="warp-grid"></div>
 
-        <div class="setting-row">
-          <span class="setting-label">GOD MODE (FLOOR BOUNCE):</span>
-          <button id="toggle-godmode" class="btn-toggle">OFF</button>
-        </div>
-
-        <div style="font-size: 10px; color: #888; margin-top: 6px; letter-spacing: 1px; text-transform: uppercase;">Instant Cheats:</div>
-        <div class="cheats-grid">
-          <button class="cheat-btn" id="cheat-mega">📏 Mega Paddle</button>
-          <button class="cheat-btn" id="cheat-laser">⚡ Laser Cannons</button>
-          <button class="cheat-btn" id="cheat-life">💖 +1 Extra Life</button>
-          <button class="cheat-btn" id="cheat-slow">🐢 Slow Ball</button>
-          <button class="cheat-btn" id="cheat-skip">⏭️ Skip Level</button>
-          <button class="cheat-btn" id="cheat-god">🛡️ God Mode</button>
-        </div>
+        <div class="section-label">Keys: arrows move &bull; Ctrl fire &bull; Space use &bull; Alt strafe &bull; Tab automap &bull; Esc menu &bull; 1-7 weapons</div>
 
         <div class="action-row">
-          <button id="btn-resume" class="btn-action btn-close">▶️ RESUME</button>
-          <button id="btn-newgame" class="btn-action btn-restart">🔄 NEW GAME</button>
+          <button id="btn-resume" class="btn-action btn-resume">&#9654;&#65039; BACK TO GAME</button>
         </div>
       </div>
     </div>
@@ -331,16 +276,19 @@
 
   <div id="controls-tip">
     <div class="controls-left">
-      <span>◄ LEFT / RIGHT ► Keys • SPACE / CLICK to Launch/Fire</span>
-      <span id="ai-status" class="badge" style="display:none;">AI AUTOPILOT ACTIVE</span>
-      <span id="laser-status" class="badge" style="display:none; color:#ff007f; border-color:#ff007f;">LASER CANNONS READY</span>
+      <span id="player-badge" class="badge player">PLAYER 1</span>
+      <span>Click screen to play &bull; Arrows move &bull; Ctrl fire &bull; Space use</span>
+      <span id="level-badge" class="badge" style="display:none;">E1M1</span>
+      <span id="god-badge" class="badge god" style="display:none;">GOD MODE</span>
+      <span id="noclip-badge" class="badge noclip" style="display:none;">NOCLIP</span>
     </div>
-    <button id="settings-btn">⚙️ SETTINGS [ESC]</button>
+    <button id="console-btn">&#128127; CONSOLE</button>
   </div>
 
   <script>
     /**
-     * Complete, Spec-Compliant MCP Apps Protocol Bridge with Origin Security & Continuity
+     * Complete, Spec-Compliant MCP Apps Protocol Bridge with Origin Security & Continuity.
+     * Unchanged from the Breakout version except for appInfo.
      */
     class MCPAppsBridge {
       constructor() {
@@ -355,7 +303,6 @@
           this.handleIncomingMessage(event);
         });
 
-        // Step 1: Send ui/initialize to Host
         this.sendInitialize();
       }
 
@@ -376,7 +323,7 @@
           method: "ui/initialize",
           params: {
             protocolVersion: "2024-11-05",
-            appInfo: { name: "retro-breakout", version: "1.2.0" },
+            appInfo: { name: "doom", version: "2.0.0" },
             appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] }
           }
         });
@@ -470,809 +417,378 @@
       }
     }
 
-    const mcp = new MCPAppsBridge();
+    // Embed mode: this page is running inside the tiny ui://doom shell resource, which itself sits
+    // in the host's sandbox. The shell owns the MCP Apps bridge; we talk to it with plain
+    // postMessage so DOOM's WebAssembly runs from OUR origin (hosts' sandbox CSP forbids wasm).
+    const EMBED_MODE = (() => { try { return new URLSearchParams(window.location.search).get("embed") === "1"; } catch (e) { return false; } })();
+    class EmbedRelay {
+      constructor() {
+        this.ontoolresult = null;
+        window.addEventListener("message", (event) => {
+          if (event.source !== window.parent) return;
+          const d = event.data;
+          if (d && d.type === "doom:tool-result" && this.ontoolresult) this.ontoolresult(d.data);
+        });
+        this.post({ type: "doom:hello" });
+      }
+      post(msg) {
+        if (window.parent && window.parent !== window) window.parent.postMessage(msg, "*");
+      }
+      async updateModelContext(messageText, metadata = {}) {
+        this.post({ type: "doom:context", text: messageText, meta: metadata });
+      }
+    }
+    const mcp = EMBED_MODE ? new EmbedRelay() : new MCPAppsBridge();
 
-    // Canvas Context
-    const canvas = document.getElementById('gameCanvas');
-    const ctx = canvas.getContext('2d', { alpha: false });
-    const aiStatusBadge = document.getElementById('ai-status');
-    const laserStatusBadge = document.getElementById('laser-status');
-
-    // UI Drawer Elements
-    const settingsBtn = document.getElementById('settings-btn');
-    const settingsModal = document.getElementById('settings-modal');
-    const paddleSlider = document.getElementById('paddle-slider');
-    const paddleVal = document.getElementById('paddle-val');
-    const speedSlider = document.getElementById('speed-slider');
-    const speedVal = document.getElementById('speed-val');
-    const toggleAutopilot = document.getElementById('toggle-autopilot');
-    const toggleGodmode = document.getElementById('toggle-godmode');
-    const btnResume = document.getElementById('btn-resume');
-    const btnNewGame = document.getElementById('btn-newgame');
-
-    // Live Game Configuration
-    const config = {
-      paddleSize: 120,
-      ballSpeed: 5.5,
-      lives: 3,
-      autopilot: false,
-      godMode: false
-    };
-
-    // Player Identity
+    // ------------------------------------------------------------------
+    // Player identity (server substitutes the literal below per session)
+    // ------------------------------------------------------------------
     window.INITIAL_PLAYER_NAME = "Player 1";
     let playerName = window.INITIAL_PLAYER_NAME;
     try {
       const urlParams = new URLSearchParams(window.location.search);
-      playerName = urlParams.get('player') || urlParams.get('playerName') || localStorage.getItem('breakout_player_name') || window.INITIAL_PLAYER_NAME || 'Player 1';
-    } catch(e) {}
+      playerName = urlParams.get('player') || urlParams.get('playerName') || window.INITIAL_PLAYER_NAME || 'Player 1';
+    } catch (e) {}
 
-    // Game State
-    let score = 0;
-    let highScore = 0;
-    try {
-      highScore = Number(localStorage.getItem('breakout_high_score') || 0);
-    } catch(e) {}
+    // ------------------------------------------------------------------
+    // DOM handles
+    // ------------------------------------------------------------------
+    const canvas = document.getElementById('screen');
+    const ctx2d = canvas.getContext('2d');
+    const bootOverlay = document.getElementById('boot-overlay');
+    const bootStatus = document.getElementById('boot-status');
+    const bootBarFill = document.getElementById('boot-bar-fill');
+    const consoleBtn = document.getElementById('console-btn');
+    const consoleModal = document.getElementById('console-modal');
+    const btnResume = document.getElementById('btn-resume');
+    const btnNewGame = document.getElementById('btn-newgame');
+    const skillSelect = document.getElementById('skill-select');
+    const playerBadge = document.getElementById('player-badge');
+    const levelBadge = document.getElementById('level-badge');
+    const godBadge = document.getElementById('god-badge');
+    const noclipBadge = document.getElementById('noclip-badge');
+    playerBadge.textContent = String(playerName).toUpperCase();
 
-    let currentLives = config.lives;
-    let isPaused = true;
-    let isSettingsOpen = false;
-    let gameOver = false;
-    let gameWon = false;
-    let isResumedSession = false;
-    let level = 1;
-    let lastSentScore = 0;
-    let hasLasers = false;
-    const lasers = [];
-
-    // Paddle
-    const paddle = {
-      x: canvas.width / 2 - config.paddleSize / 2,
-      y: canvas.height - 38,
-      width: config.paddleSize,
-      height: 14,
-      speed: 8.5
+    // ------------------------------------------------------------------
+    // Engine state (best-effort mirror of what DOOM is doing; the engine
+    // itself is the source of truth, this only drives our key macros).
+    // ------------------------------------------------------------------
+    const state = {
+      booted: false,        // wasm instantiated and main() returned
+      inLevel: false,       // a level is loaded (set by our New Game macro)
+      menuOpen: false,      // DOOM's menu is up (tracked from Esc presses)
+      consoleOpen: false,   // our overlay drawer is up (swallows keys)
+      godMode: false,
+      noClip: false,
+      map: 1,
+      frames: 0
     };
 
-    // Ball
-    const ball = {
-      x: canvas.width / 2,
-      y: canvas.height - 56,
-      radius: 7,
-      speed: config.ballSpeed,
-      dx: 0,
-      dy: 0,
-      active: false
+    const SKILL_NAMES = ["I'm too young to die", "Hey, not too rough", "Hurt me plenty", "Ultra-Violence", "Nightmare!"];
+
+    // ------------------------------------------------------------------
+    // WebAssembly boot. The gzipped binary (linuxdoom + shareware IWAD)
+    // is embedded below by the server; nothing is fetched over the network.
+    // ------------------------------------------------------------------
+    const memory = new WebAssembly.Memory({ initial: 108 });
+    let exportsRef = null;
+
+    const DOOM_W = 640, DOOM_H = 400;
+
+    function readWasmString(offset, length) {
+      return new TextDecoder('utf8').decode(new Uint8Array(memory.buffer, offset, length));
+    }
+    function engineLog(prefix) {
+      return (offset, length) => {
+        const text = readWasmString(offset, length).trim();
+        if (text) console.log(`[DOOM ${prefix}] ${text}`);
+      };
+    }
+    function drawCanvas(ptr) {
+      const px = new Uint8ClampedArray(memory.buffer, ptr, DOOM_W * DOOM_H * 4);
+      ctx2d.putImageData(new ImageData(px, DOOM_W, DOOM_H), 0, 0);
+      state.frames++;
+    }
+
+    const importObject = {
+      js: {
+        js_console_log: engineLog("log"),
+        js_stdout: engineLog("stdout"),
+        js_stderr: engineLog("stderr"),
+        js_milliseconds_since_start: () => performance.now(),
+        js_draw_screen: drawCanvas
+      },
+      env: { memory }
     };
 
-    // Bricks Grid
-    const brickRowCount = 5;
-    const brickColumnCount = 10;
-    const brickWidth = 72;
-    const brickHeight = 18;
-    const brickPadding = 4;
-    const brickOffsetTop = 95;
-    const brickOffsetLeft = 24;
-
-    const rowProperties = [
-      { color: '#ff0040', points: 7 }, // Red
-      { color: '#ff7700', points: 5 }, // Orange
-      { color: '#ffcc00', points: 3 }, // Yellow
-      { color: '#00ff66', points: 2 }, // Green
-      { color: '#00ccff', points: 1 }  // Cyan
-    ];
-
-    let bricks = [];
-    function initBricks() {
-      bricks = [];
-      for (let c = 0; c < brickColumnCount; c++) {
-        bricks[c] = [];
-        for (let r = 0; r < brickRowCount; r++) {
-          bricks[c][r] = {
-            x: (c * (brickWidth + brickPadding)) + brickOffsetLeft,
-            y: (r * (brickHeight + brickPadding)) + brickOffsetTop,
-            status: 1,
-            color: rowProperties[r].color,
-            points: rowProperties[r].points
-          };
-        }
-      }
+    function setBoot(pct, msg) {
+      bootBarFill.style.width = `${pct}%`;
+      if (msg) bootStatus.textContent = msg;
     }
 
-    // --- Session Storage State Persistence & Continuity ---
-    const STORAGE_KEY = 'mcp_breakout_session_state';
+    // The engine (linuxdoom-1.10 + shareware IWAD, gzip) is fetched from the server that served
+    // this page. It is deliberately NOT inlined any more: MCP Apps hosts build the sandbox CSP
+    // without 'wasm-unsafe-eval', so this page has to run from our own origin (nested by the
+    // shell resource), where fetching a sibling URL is trivial and the browser can cache it.
+    const DOOM_WASM_URL = window.DOOM_WASM_URL || new URL("doom.wasm.gz", window.location.href).href;
 
-    function saveGameState() {
+    async function loadWasmBytes() {
+      setBoot(10, "Fetching DOOM engine + IWAD (2.2 MB gzip)...");
+      const resp = await fetch(DOOM_WASM_URL, { cache: "force-cache" });
+      if (!resp.ok) throw new Error(`Engine download failed: HTTP ${resp.status} from ${DOOM_WASM_URL}`);
+      const gz = new Uint8Array(await resp.arrayBuffer());
+
+      setBoot(45, "Inflating gzip stream...");
+      if (typeof DecompressionStream === "undefined") {
+        throw new Error("This browser lacks DecompressionStream; DOOM needs a modern Chromium/Firefox/Safari.");
+      }
+      const stream = new Blob([gz]).stream().pipeThrough(new DecompressionStream("gzip"));
+      const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
+      setBoot(75, `Compiling ${(bytes.length / 1048576).toFixed(1)} MB WebAssembly module...`);
+      return bytes;
+    }
+
+    async function bootDoom() {
       try {
-        const brickStatusMatrix = [];
-        for (let c = 0; c < brickColumnCount; c++) {
-          brickStatusMatrix[c] = [];
-          for (let r = 0; r < brickRowCount; r++) {
-            brickStatusMatrix[c][r] = bricks[c] && bricks[c][r] ? bricks[c][r].status : 0;
-          }
-        }
+        const bytes = await loadWasmBytes();
+        const { instance } = await WebAssembly.instantiate(bytes, importObject);
+        exportsRef = instance.exports;
+        setBoot(95, "Running D_DoomMain...");
+        await new Promise(r => setTimeout(r, 30));
+        exportsRef.main();
+        state.booted = true;
 
-        const statePayload = {
-          score: score,
-          currentLives: currentLives,
-          level: level,
-          gameOver: gameOver,
-          gameWon: gameWon,
-          config: config,
-          hasLasers: hasLasers,
-          brickMatrix: brickStatusMatrix,
-          timestamp: Date.now()
-        };
+        const step = () => { exportsRef.doom_loop_step(); requestAnimationFrame(step); };
+        requestAnimationFrame(step);
 
-        sessionStorage.setItem(STORAGE_KEY, JSON.stringify(statePayload));
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(statePayload));
-      } catch (e) {}
-    }
-
-    function loadGameState() {
-      try {
-        const raw = sessionStorage.getItem(STORAGE_KEY) || localStorage.getItem(STORAGE_KEY);
-        if (!raw) return false;
-        const saved = JSON.parse(raw);
-        if (!saved) return false;
-
-        // If previous game was over or expired (> 3 hours), start fresh
-        if (saved.gameOver || (Date.now() - (saved.timestamp || 0) > 3 * 3600 * 1000)) {
-          return false;
-        }
-
-        // Restore active game progress
-        score = saved.score || 0;
-        currentLives = Math.max(1, saved.currentLives !== undefined ? saved.currentLives : 3);
-        level = saved.level || 1;
-        gameWon = Boolean(saved.gameWon);
-        gameOver = false;
-        hasLasers = Boolean(saved.hasLasers);
-        if (laserStatusBadge) laserStatusBadge.style.display = hasLasers ? 'inline-block' : 'none';
-
-        if (saved.config) {
-          applyConfiguration(saved.config, false);
-        }
-
-        // Restore brick status matrix
-        if (saved.brickMatrix && Array.isArray(saved.brickMatrix)) {
-          initBricks();
-          for (let c = 0; c < brickColumnCount; c++) {
-            for (let r = 0; r < brickRowCount; r++) {
-              if (saved.brickMatrix[c] && saved.brickMatrix[c][r] !== undefined) {
-                bricks[c][r].status = saved.brickMatrix[c][r];
-              }
-            }
-          }
-        }
-
-        isResumedSession = score > 0 || level > 1;
-        return true;
-      } catch (e) {
-        return false;
+        setBoot(100, "CLICK TO RIP AND TEAR");
+        bootOverlay.classList.add("ready");
+        if (EMBED_MODE) mcp.post({ type: "doom:ready" });
+        mcp.updateModelContext(`[DOOM EVENT: READY] DOOM booted for ${playerName} and is showing the title screen / demo loop. Click the screen (or call start_new_game) to begin.`);
+      } catch (err) {
+        console.error("[DOOM] boot failed:", err);
+        bootOverlay.classList.remove("ready");
+        const reason = `${err && err.name ? err.name + ": " : ""}${err && err.message ? err.message : String(err)}`;
+        setBoot(0, `BOOT FAILED: ${reason}`);
+        if (EMBED_MODE) mcp.post({ type: "doom:boot-failed", message: reason });
+        bootStatus.style.color = "#ff3b1f";
+        mcp.updateModelContext(`[DOOM EVENT: BOOT_FAILED] ${err.message}`);
       }
     }
 
-    function clearGameState() {
-      try {
-        sessionStorage.removeItem(STORAGE_KEY);
-        localStorage.removeItem(STORAGE_KEY);
-      } catch (e) {}
-    }
+    // ------------------------------------------------------------------
+    // Keyboard -> DOOM input queue
+    // ------------------------------------------------------------------
+    const DK = { ENTER: 13, ESCAPE: 27, TAB: 9, LEFT: 0xac, UP: 0xad, RIGHT: 0xae, DOWN: 0xaf, RCTRL: 0x9d, RALT: 0xb8, RSHIFT: 0xb6 };
 
-    // Particle Object Pool
-    const MAX_PARTICLES = 250;
-    const particlePool = [];
-    for (let i = 0; i < MAX_PARTICLES; i++) {
-      particlePool.push({
-        active: false,
-        x: 0,
-        y: 0,
-        size: 0,
-        color: '#fff',
-        vx: 0,
-        vy: 0,
-        alpha: 1.0,
-        decay: 0.02
-      });
-    }
-
-    function spawnExplosion(x, y, color, count = 16) {
-      let spawned = 0;
-      for (let i = 0; i < MAX_PARTICLES && spawned < count; i++) {
-        const p = particlePool[i];
-        if (!p.active) {
-          p.active = true;
-          p.x = x;
-          p.y = y;
-          p.size = Math.random() * 4 + 2.5;
-          p.color = color;
-          p.vx = (Math.random() - 0.5) * 7;
-          p.vy = (Math.random() - 0.5) * 7 - 2;
-          p.alpha = 1.0;
-          p.decay = Math.random() * 0.025 + 0.018;
-          spawned++;
-        }
+    function doomKeyCode(keyCode) {
+      switch (keyCode) {
+        case 8: return 127;            // backspace
+        case 16: return DK.RSHIFT;     // shift = run
+        case 17: return DK.RCTRL;      // ctrl = fire
+        case 18: return DK.RALT;       // alt = strafe
+        case 37: return DK.LEFT;
+        case 38: return DK.UP;
+        case 39: return DK.RIGHT;
+        case 40: return DK.DOWN;
+        case 187: return 61;           // '=' (screen size +)
+        case 189: return 45;           // '-' (screen size -)
+        case 188: return 44;           // ',' strafe left
+        case 190: return 46;           // '.' strafe right
+        default:
+          if (keyCode >= 65 && keyCode <= 90) return keyCode + 32;   // letters -> lowercase ascii
+          if (keyCode >= 112 && keyCode <= 123) return keyCode + 75; // F1..F12
+          return keyCode;                                            // digits, space, enter, esc, tab
       }
     }
 
-    function updateParticles(dt) {
-      for (let i = 0; i < MAX_PARTICLES; i++) {
-        const p = particlePool[i];
-        if (p.active) {
-          p.x += p.vx * dt;
-          p.y += p.vy * dt;
-          p.vy += 0.15 * dt;
-          p.alpha -= p.decay * dt;
-          if (p.alpha <= 0) p.active = false;
-        }
-      }
+    const held = new Set();
+    function keyDown(code) { if (exportsRef) exportsRef.add_browser_event(0, code); }
+    function keyUp(code)   { if (exportsRef) exportsRef.add_browser_event(1, code); }
+    function releaseAll()  { for (const c of held) keyUp(c); held.clear(); }
+
+    function inputAllowed() {
+      return state.booted && !state.consoleOpen && !bootOverlay.isConnected;
     }
 
-    function drawParticles() {
-      for (let i = 0; i < MAX_PARTICLES; i++) {
-        const p = particlePool[i];
-        if (p.active) {
-          ctx.globalAlpha = Math.max(0, p.alpha);
-          ctx.fillStyle = p.color;
-          ctx.fillRect(p.x, p.y, p.size, p.size);
-        }
-      }
-      ctx.globalAlpha = 1.0;
+    window.addEventListener('keydown', (e) => {
+      if (!inputAllowed()) return;
+      if (e.repeat) { e.preventDefault(); return; }
+      const code = doomKeyCode(e.keyCode);
+      // Track DOOM's own menu so our macros can start from a known state.
+      if (e.keyCode === 27) state.menuOpen = !state.menuOpen;
+      else if (!state.inLevel && !state.menuOpen) state.menuOpen = true; // any key on the title screen opens the menu
+      held.add(code);
+      keyDown(code);
+      e.preventDefault();
+    }, { passive: false });
+
+    window.addEventListener('keyup', (e) => {
+      if (!state.booted) return;
+      const code = doomKeyCode(e.keyCode);
+      held.delete(code);
+      keyUp(code);
+      if (inputAllowed()) e.preventDefault();
+    }, { passive: false });
+
+    window.addEventListener('blur', releaseAll);
+    document.addEventListener('visibilitychange', () => { if (document.hidden) releaseAll(); });
+
+    // ------------------------------------------------------------------
+    // Macros: serialized key sequences driven by tool calls or the drawer.
+    // ------------------------------------------------------------------
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    // Macros wait for the engine to boot, so a tool call that lands mid-boot is not lost.
+    let bootReady = null;
+    let macroChain = Promise.resolve();
+    function enqueue(fn) {
+      macroChain = macroChain.then(() => bootReady).then(fn).catch(err => console.warn("[DOOM macro]", err));
+      return macroChain;
+    }
+    function takeScreen() {
+      if (bootOverlay.isConnected) bootOverlay.remove();
+      canvas.focus();
     }
 
-    function fireLasers() {
-      if (!hasLasers || isPaused || isSettingsOpen || gameOver || gameWon) return;
-      lasers.push({
-        x: paddle.x + 8,
-        y: paddle.y - 6,
-        vy: -14,
-        active: true
-      });
-      lasers.push({
-        x: paddle.x + paddle.width - 8,
-        y: paddle.y - 6,
-        vy: -14,
-        active: true
-      });
-      spawnExplosion(paddle.x + 8, paddle.y - 4, '#ff007f', 4);
-      spawnExplosion(paddle.x + paddle.width - 8, paddle.y - 4, '#ff007f', 4);
+    // One tic is ~28.6ms; give the engine two tics between key transitions.
+    async function tap(code, gap = 70) {
+      keyDown(code); await sleep(40); keyUp(code); await sleep(gap);
+    }
+    async function typeText(text, gap = 55) {
+      for (const ch of text) await tap(ch.charCodeAt(0), gap);
     }
 
-    // Input Handling
-    let rightPressed = false;
-    let leftPressed = false;
-
-    window.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") {
-        toggleSettingsDrawer();
-        return;
-      }
-      if (isSettingsOpen) return;
-
-      if (e.key === "Right" || e.key === "ArrowRight") {
-        rightPressed = true;
-      } else if (e.key === "Left" || e.key === "ArrowLeft") {
-        leftPressed = true;
-      } else if (e.key === " " || e.code === "Space" || e.key === "f" || e.key === "F") {
-        e.preventDefault();
-        if (gameOver) {
-          resetGame(true);
-        } else if (gameWon) {
-          nextLevel();
-        } else if (!ball.active) {
-          launchBall();
-        } else if (hasLasers) {
-          fireLasers();
-        } else {
-          isPaused = !isPaused;
-        }
-      }
-    });
-
-    window.addEventListener("keyup", (e) => {
-      if (e.key === "Right" || e.key === "ArrowRight") rightPressed = false;
-      if (e.key === "Left" || e.key === "ArrowLeft") leftPressed = false;
-    });
-
-    function handlePointer(clientX) {
-      if (config.autopilot || isSettingsOpen) return;
-      const rect = canvas.getBoundingClientRect();
-      const relativeX = (clientX - rect.left) * (canvas.width / rect.width);
-      paddle.x = Math.max(0, Math.min(canvas.width - paddle.width, relativeX - paddle.width / 2));
+    async function newGameMacro(skillIndex) {
+      if (!state.booted) return;
+      takeScreen();
+      skillIndex = Math.max(0, Math.min(4, Number(skillIndex) || 0));
+      releaseAll();
+      if (state.menuOpen) { await tap(DK.ESCAPE, 150); state.menuOpen = false; }
+      await tap(DK.ESCAPE, 200);       // opens the main menu from title, demo, or in-game
+      await tap(110 /* n */, 90);      // cursor -> New Game
+      await tap(DK.ENTER, 200);        // -> episode menu
+      await tap(107 /* k */, 90);      // cursor -> Knee-Deep in the Dead
+      await tap(DK.ENTER, 200);        // -> skill menu
+      await tap(105 /* i */, 90);      // cursor -> top entry (unique hotkey)
+      for (let i = 0; i < skillIndex; i++) await tap(DK.DOWN, 90);
+      await tap(DK.ENTER, 200);        // start!
+      if (skillIndex === 4) await tap(121 /* y */, 200); // Nightmare asks "are you sure?"
+      state.menuOpen = false;
+      state.inLevel = true;
+      state.godMode = false;
+      state.noClip = false;
+      state.map = 1;
+      refreshBadges();
+      await sleep(1200);               // screen wipe + level load
+      mcp.updateModelContext(`[DOOM EVENT: NEW_GAME] ${playerName} started E1M1: Hangar at skill "${SKILL_NAMES[skillIndex]}".`);
     }
 
-    canvas.addEventListener("mousemove", (e) => handlePointer(e.clientX));
-    canvas.addEventListener("touchmove", (e) => {
-      if (e.touches && e.touches[0]) handlePointer(e.touches[0].clientX);
-    }, { passive: true });
-
-    canvas.addEventListener("click", () => {
-      if (isSettingsOpen) return;
-      if (gameOver) {
-        resetGame(true);
-      } else if (gameWon) {
-        nextLevel();
-      } else if (!ball.active) {
-        launchBall();
-      } else if (hasLasers) {
-        fireLasers();
+    async function cheatMacro(code, friendly) {
+      if (!state.booted) return;
+      takeScreen();
+      if (!state.inLevel) {
+        await newGameMacro(Number(skillSelect.value));
+        await sleep(600);
       }
-    });
-
-    function launchBall() {
-      ball.active = true;
-      ball.speed = config.ballSpeed;
-      ball.dx = (Math.random() * 2 - 1) * ball.speed * 0.6;
-      ball.dy = -ball.speed;
-      isPaused = false;
-      isResumedSession = false;
+      if (state.menuOpen) { await tap(DK.ESCAPE, 150); state.menuOpen = false; }
+      await typeText(code);
+      if (code === "iddqd") state.godMode = !state.godMode;
+      if (code === "idspispopd" || code === "idclip") state.noClip = !state.noClip;
+      const m = code.match(/^idclev1(\d)$/);
+      if (m) { state.map = Number(m[1]); state.godMode = false; state.noClip = false; }
+      refreshBadges();
+      mcp.updateModelContext(`[DOOM EVENT: CHEAT] Typed ${code.toUpperCase()}${friendly ? ` (${friendly})` : ""} for ${playerName}.`);
     }
 
-    function resetBallPaddle() {
-      paddle.x = canvas.width / 2 - paddle.width / 2;
-      ball.x = canvas.width / 2;
-      ball.y = paddle.y - ball.radius - 2;
-      ball.dx = 0;
-      ball.dy = 0;
-      ball.active = false;
+    function refreshBadges() {
+      levelBadge.style.display = state.inLevel ? 'inline-block' : 'none';
+      levelBadge.textContent = `E1M${state.map}`;
+      godBadge.style.display = state.godMode ? 'inline-block' : 'none';
+      noclipBadge.style.display = state.noClip ? 'inline-block' : 'none';
     }
 
-    function nextLevel() {
-      level += 1;
-      gameWon = false;
-      gameOver = false;
-      isPaused = true;
-      isResumedSession = false;
-      lasers.length = 0;
-      initBricks();
-      resetBallPaddle();
-      saveGameState();
-    }
-
-    function resetGame(fullReset = false) {
-      if (fullReset) {
-        score = 0;
-        level = 1;
-        currentLives = config.lives;
-        hasLasers = false;
-        if (laserStatusBadge) laserStatusBadge.style.display = 'none';
-        clearGameState();
-      }
-      gameOver = false;
-      gameWon = false;
-      isPaused = true;
-      isResumedSession = false;
-      lasers.length = 0;
-      initBricks();
-      resetBallPaddle();
-      saveGameState();
-    }
-
-    // Apply Live Configuration Updates (from LLM or HUD)
-    function applyConfiguration(newConfig, shouldSave = true) {
-      if (!newConfig) return;
-
-      if (newConfig.paddleSize !== undefined || newConfig.paddleWidth !== undefined) {
-        const newSize = Number(newConfig.paddleSize || newConfig.paddleWidth);
-        const diff = newSize - paddle.width;
-        paddle.width = newSize;
-        config.paddleSize = newSize;
-        paddle.x -= diff / 2;
-        if (paddleSlider) paddleSlider.value = newSize;
-        if (paddleVal) paddleVal.textContent = newSize + "px";
-      }
-      if (newConfig.ballSpeed !== undefined) {
-        config.ballSpeed = Number(newConfig.ballSpeed);
-        if (speedSlider) speedSlider.value = config.ballSpeed;
-        if (speedVal) speedVal.textContent = config.ballSpeed;
-        if (ball.active) {
-          const currentSpeed = Math.sqrt(ball.dx * ball.dx + ball.dy * ball.dy);
-          if (currentSpeed > 0) {
-            ball.dx = (ball.dx / currentSpeed) * config.ballSpeed;
-            ball.dy = (ball.dy / currentSpeed) * config.ballSpeed;
-          }
-        }
-      }
-      if (newConfig.lives !== undefined) {
-        const diff = Number(newConfig.lives) - config.lives;
-        config.lives = Number(newConfig.lives);
-        currentLives = Math.max(1, currentLives + diff);
-      }
-      if (newConfig.autopilot !== undefined) {
-        config.autopilot = Boolean(newConfig.autopilot);
-        if (aiStatusBadge) aiStatusBadge.style.display = config.autopilot ? 'inline-block' : 'none';
-        if (toggleAutopilot) {
-          toggleAutopilot.textContent = config.autopilot ? "ON" : "OFF";
-          toggleAutopilot.classList.toggle("active", config.autopilot);
-        }
-      }
-      if (newConfig.godMode !== undefined) {
-        config.godMode = Boolean(newConfig.godMode);
-        if (toggleGodmode) {
-          toggleGodmode.textContent = config.godMode ? "ON" : "OFF";
-          toggleGodmode.classList.toggle("active", config.godMode);
-        }
-      }
-
-      paddle.x = Math.max(0, Math.min(canvas.width - paddle.width, paddle.x));
-      if (shouldSave) saveGameState();
-    }
-
-    function handleCheat(cheat) {
-      if (cheat === "god_mode" || cheat === "godMode") {
-        applyConfiguration({ godMode: true });
-        spawnExplosion(paddle.x + paddle.width / 2, paddle.y, "#00ffff", 25);
-      } else if (cheat === "extra_ball" || cheat === "extraBall") {
-        currentLives += 1;
-        saveGameState();
-        spawnExplosion(canvas.width / 2, 45, "#ffffff", 20);
-      } else if (cheat === "slow_ball" || cheat === "slowBall") {
-        applyConfiguration({ ballSpeed: 3.5 });
-      } else if (cheat === "mega_paddle" || cheat === "megaPaddle") {
-        applyConfiguration({ paddleSize: 220 });
-        spawnExplosion(paddle.x + paddle.width / 2, paddle.y, "#00ff66", 25);
-      } else if (cheat === "laser_paddle" || cheat === "laserPaddle") {
-        hasLasers = true;
-        if (laserStatusBadge) laserStatusBadge.style.display = 'inline-block';
-        applyConfiguration({ paddleSize: 180 });
-        spawnExplosion(paddle.x + paddle.width / 2, paddle.y, "#ff007f", 30);
-      } else if (cheat === "win_level" || cheat === "levelBypass") {
-        winLevel();
-      }
-    }
-
+    // ------------------------------------------------------------------
+    // Tool results forwarded by the MCP Apps host
+    // ------------------------------------------------------------------
     mcp.ontoolresult = (data) => {
+      if (!data || typeof data !== "object") return;
       if (data.playerName) {
         playerName = data.playerName;
-        try { localStorage.setItem('breakout_player_name', playerName); } catch(e) {}
+        playerBadge.textContent = String(playerName).toUpperCase();
       }
-      if (data.settings) applyConfiguration(data.settings);
-      if (data.cheatApplied) handleCheat(data.cheatApplied);
+      if (data.action === "new_game") {
+        skillSelect.value = String(data.skillIndex ?? 2);
+        dismissOverlay(false);
+        enqueue(() => newGameMacro(data.skillIndex ?? 2));
+      } else if (data.warpTo && data.code) {
+        dismissOverlay(false);
+        enqueue(() => cheatMacro(data.code, `warp to E${data.warpTo.episode}M${data.warpTo.map}`));
+      } else if (data.cheatApplied && data.code) {
+        dismissOverlay(false);
+        enqueue(() => cheatMacro(data.code, data.cheatApplied));
+      }
     };
 
-    function winLevel() {
-      gameWon = true;
-      isPaused = true;
-      ball.active = false;
-      saveGameState();
-      spawnExplosion(canvas.width / 2, canvas.height / 2, '#00ff66', 40);
-      mcp.updateModelContext(
-        `[BREAKOUT GAME EVENT: LEVEL_CLEARED] The player completed Level ${level} with a score of ${score}! Suggest they attempt Level ${level + 1} with higher ball speed!`
-      );
-    }
-
-    function triggerGameOver() {
-      gameOver = true;
-      isPaused = true;
-      ball.active = false;
-      clearGameState(); // Clear in-progress session so next game starts fresh
-      spawnExplosion(ball.x, ball.y, '#ff003c', 35);
-      if (score > highScore) {
-        highScore = score;
-        try { localStorage.setItem('breakout_high_score', score); } catch(e) {}
+    // ------------------------------------------------------------------
+    // Overlay + console drawer
+    // ------------------------------------------------------------------
+    function dismissOverlay(startGame) {
+      if (bootOverlay.isConnected) {
+        if (!state.booted) return;
+        bootOverlay.remove();
       }
-      mcp.updateModelContext(
-        `[BREAKOUT GAME EVENT: GAME_OVER] The player met their doom with a final score of ${score} on Level ${level}. Encourage them to play again!`
-      );
+      canvas.focus();
+      if (startGame && !state.inLevel) enqueue(() => newGameMacro(Number(skillSelect.value)));
     }
 
-    // In-App Settings Drawer Interactions
-    function toggleSettingsDrawer() {
-      isSettingsOpen = !isSettingsOpen;
-      settingsModal.style.display = isSettingsOpen ? 'flex' : 'none';
-      if (isSettingsOpen) isPaused = true;
-    }
+    bootOverlay.addEventListener('click', () => dismissOverlay(true));
+    canvas.addEventListener('mousedown', () => canvas.focus());
 
-    settingsBtn.addEventListener('click', toggleSettingsDrawer);
-    btnResume.addEventListener('click', toggleSettingsDrawer);
+    function setConsole(open) {
+      state.consoleOpen = open;
+      consoleModal.style.display = open ? 'flex' : 'none';
+      if (open) releaseAll(); else canvas.focus();
+    }
+    consoleBtn.addEventListener('click', () => setConsole(!state.consoleOpen));
+    btnResume.addEventListener('click', () => setConsole(false));
     btnNewGame.addEventListener('click', () => {
-      toggleSettingsDrawer();
-      resetGame(true);
+      const skill = Number(skillSelect.value);
+      setConsole(false);
+      dismissOverlay(false);
+      enqueue(() => newGameMacro(skill));
     });
 
-    paddleSlider.addEventListener('input', (e) => {
-      const val = Number(e.target.value);
-      applyConfiguration({ paddleSize: val });
+    document.querySelectorAll('#cheat-grid .cheat-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        setConsole(false);
+        dismissOverlay(false);
+        enqueue(() => cheatMacro(btn.dataset.code, btn.dataset.cheat));
+      });
     });
 
-    speedSlider.addEventListener('input', (e) => {
-      const val = Number(e.target.value);
-      applyConfiguration({ ballSpeed: val });
-    });
-
-    toggleAutopilot.addEventListener('click', () => {
-      applyConfiguration({ autopilot: !config.autopilot });
-      mcp.updateModelContext(`[USER ACTION] Autopilot set to ${config.autopilot ? 'ON' : 'OFF'}`);
-    });
-
-    toggleGodmode.addEventListener('click', () => {
-      applyConfiguration({ godMode: !config.godMode });
-      mcp.updateModelContext(`[USER ACTION] God Mode set to ${config.godMode ? 'ON' : 'OFF'}`);
-    });
-
-    document.getElementById('cheat-mega').addEventListener('click', () => handleCheat('mega_paddle'));
-    document.getElementById('cheat-laser').addEventListener('click', () => handleCheat('laser_paddle'));
-    document.getElementById('cheat-life').addEventListener('click', () => handleCheat('extra_ball'));
-    document.getElementById('cheat-slow').addEventListener('click', () => handleCheat('slow_ball'));
-    document.getElementById('cheat-skip').addEventListener('click', () => handleCheat('win_level'));
-    document.getElementById('cheat-god').addEventListener('click', () => handleCheat('god_mode'));
-
-    // Physics & Collision Loop
-    function updatePhysics(dt) {
-      if (isPaused || isSettingsOpen || gameOver || gameWon) return;
-
-      if (config.autopilot && ball.active) {
-        const paddleCenter = paddle.x + paddle.width / 2;
-        const diff = ball.x - paddleCenter;
-        const maxStep = paddle.speed * 1.2 * dt;
-        if (Math.abs(diff) > 4) {
-          paddle.x += Math.sign(diff) * Math.min(Math.abs(diff), maxStep);
-        }
-      } else {
-        if (rightPressed && paddle.x < canvas.width - paddle.width) {
-          paddle.x += paddle.speed * dt;
-        } else if (leftPressed && paddle.x > 0) {
-          paddle.x -= paddle.speed * dt;
-        }
-      }
-
-      // Update Lasers
-      for (let i = 0; i < lasers.length; i++) {
-        const l = lasers[i];
-        if (l.active) {
-          l.y += l.vy * dt;
-          if (l.y < 65) {
-            l.active = false;
-            continue;
-          }
-
-          // Check collision with active bricks
-          for (let c = 0; c < brickColumnCount; c++) {
-            for (let r = 0; r < brickRowCount; r++) {
-              const b = bricks[c][r];
-              if (b.status === 1) {
-                if (l.x >= b.x && l.x <= b.x + brickWidth &&
-                    l.y >= b.y && l.y <= b.y + brickHeight) {
-                  b.status = 0;
-                  score += b.points;
-                  l.active = false;
-                  saveGameState();
-                  spawnExplosion(b.x + brickWidth / 2, b.y + brickHeight / 2, b.color, 16);
-                  if (score - lastSentScore >= 100) {
-                    lastSentScore = Math.floor(score / 100) * 100;
-                    mcp.updateModelContext(`[BREAKOUT GAME EVENT: SCORE_UPDATE] Player reached ${score} points with Laser Blasters!`);
-                  }
-                  break;
-                }
-              }
-            }
-            if (!l.active) break;
-          }
-        }
-      }
-      for (let i = lasers.length - 1; i >= 0; i--) {
-        if (!lasers[i].active) lasers.splice(i, 1);
-      }
-
-      if (ball.active) {
-        ball.x += ball.dx * dt;
-        ball.y += ball.dy * dt;
-
-        if (ball.x - ball.radius <= 0) {
-          ball.x = ball.radius;
-          ball.dx = -ball.dx;
-        } else if (ball.x + ball.radius >= canvas.width) {
-          ball.x = canvas.width - ball.radius;
-          ball.dx = -ball.dx;
-        }
-
-        if (ball.y - ball.radius <= 70) {
-          ball.y = 70 + ball.radius;
-          ball.dy = -ball.dy;
-        }
-
-        const paddleTop = paddle.y;
-        if (ball.y + ball.radius >= paddleTop && ball.y - ball.radius <= paddleTop + paddle.height) {
-          if (ball.x >= paddle.x && ball.x <= paddle.x + paddle.width) {
-            const hitOffset = ball.x - (paddle.x + paddle.width / 2);
-            const normalized = hitOffset / (paddle.width / 2);
-            ball.dx = normalized * ball.speed * 0.85;
-            ball.dy = -Math.sqrt(Math.max(4, ball.speed * ball.speed - ball.dx * ball.dx));
-            ball.y = paddleTop - ball.radius;
-          }
-        }
-
-        if (ball.y + ball.radius > canvas.height) {
-          if (config.godMode) {
-            ball.y = canvas.height - ball.radius;
-            ball.dy = -ball.dy;
-            spawnExplosion(ball.x, canvas.height - 10, "#00ffff", 10);
-          } else {
-            currentLives--;
-            saveGameState();
-            if (currentLives <= 0) {
-              triggerGameOver();
-            } else {
-              mcp.updateModelContext(`[BREAKOUT GAME EVENT: LIFE_LOST] Ball dropped! Remaining lives: ${currentLives}.`);
-              resetBallPaddle();
-            }
-          }
-        }
-
-        let activeBricks = 0;
-        for (let c = 0; c < brickColumnCount; c++) {
-          for (let r = 0; r < brickRowCount; r++) {
-            const b = bricks[c][r];
-            if (b.status === 1) {
-              activeBricks++;
-              if (ball.x + ball.radius >= b.x && ball.x - ball.radius <= b.x + brickWidth &&
-                  ball.y + ball.radius >= b.y && ball.y - ball.radius <= b.y + brickHeight) {
-                
-                const fromLeft = Math.abs((ball.x + ball.radius) - b.x);
-                const fromRight = Math.abs((ball.x - ball.radius) - (b.x + brickWidth));
-                const fromTop = Math.abs((ball.y + ball.radius) - b.y);
-                const fromBottom = Math.abs((ball.y - ball.radius) - (b.y + brickHeight));
-                const minDiff = Math.min(fromLeft, fromRight, fromTop, fromBottom);
-
-                if (minDiff === fromTop || minDiff === fromBottom) {
-                  ball.dy = -ball.dy;
-                } else {
-                  ball.dx = -ball.dx;
-                }
-
-                b.status = 0;
-                score += b.points;
-                saveGameState();
-                spawnExplosion(b.x + brickWidth / 2, b.y + brickHeight / 2, b.color, 14);
-
-                if (score - lastSentScore >= 100) {
-                  lastSentScore = Math.floor(score / 100) * 100;
-                  mcp.updateModelContext(`[BREAKOUT GAME EVENT: SCORE_UPDATE] Player reached ${score} points!`);
-                }
-                break;
-              }
-            }
-          }
-        }
-
-        if (activeBricks === 0 && !gameWon) {
-          winLevel();
-        }
-      } else {
-        ball.x = paddle.x + paddle.width / 2;
-        ball.y = paddle.y - ball.radius - 2;
-        if (config.autopilot && !isPaused && !isSettingsOpen) {
-          launchBall();
-        }
-      }
+    const warpGrid = document.getElementById('warp-grid');
+    for (let m = 1; m <= 9; m++) {
+      const b = document.createElement('button');
+      b.className = 'warp-btn';
+      b.textContent = `M${m}`;
+      b.title = `Warp to E1M${m}`;
+      b.addEventListener('click', () => {
+        setConsole(false);
+        dismissOverlay(false);
+        enqueue(() => cheatMacro(`idclev1${m}`, `warp to E1M${m}`));
+      });
+      warpGrid.appendChild(b);
     }
 
-    // Render Function
-    function render() {
-      ctx.fillStyle = '#000000';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    // Test/debug hook (used by the headless verification script; harmless in production)
+    window.__doom = {
+      state,
+      newGame: (s) => enqueue(() => newGameMacro(s)),
+      cheat: (c) => enqueue(() => cheatMacro(c)),
+      dismissOverlay
+    };
 
-      for (let c = 0; c < brickColumnCount; c++) {
-        for (let r = 0; r < brickRowCount; r++) {
-          const b = bricks[c][r];
-          if (b.status === 1) {
-            ctx.fillStyle = b.color;
-            ctx.fillRect(b.x, b.y, brickWidth, brickHeight);
-          }
-        }
-      }
-
-      // Draw Laser Projectiles
-      for (let i = 0; i < lasers.length; i++) {
-        const l = lasers[i];
-        if (l.active) {
-          ctx.fillStyle = '#ff007f';
-          ctx.fillRect(l.x - 2, l.y - 8, 4, 12);
-          ctx.fillStyle = '#ffffff';
-          ctx.fillRect(l.x - 1, l.y - 6, 2, 8);
-        }
-      }
-
-      // Draw Paddle
-      ctx.fillStyle = config.godMode ? '#00ffff' : (hasLasers ? '#ff007f' : '#ffffff');
-      ctx.fillRect(paddle.x, paddle.y, paddle.width, paddle.height);
-
-      // Draw Laser Cannons on Paddle
-      if (hasLasers) {
-        ctx.fillStyle = '#00ffcc';
-        ctx.fillRect(paddle.x + 4, paddle.y - 6, 8, 6);
-        ctx.fillRect(paddle.x + paddle.width - 12, paddle.y - 6, 8, 6);
-      }
-
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(ball.x - ball.radius, ball.y - ball.radius, ball.radius * 2, ball.radius * 2);
-
-      drawParticles();
-
-      // Retro Scoreboard with clean spacing (no overlap with any UI elements)
-      ctx.fillStyle = "#00ffcc";
-      ctx.font = "bold 12px 'Courier New', Courier, monospace";
-      ctx.textAlign = "left";
-      ctx.fillText(`PLAYER: ${playerName.toUpperCase()}`, 24, 20);
-
-      ctx.fillStyle = "#ffffff";
-      ctx.font = "bold 18px 'Courier New', Courier, monospace";
-      ctx.textAlign = "left";
-      ctx.fillText(`SCORE: ${score.toString().padStart(4, '0')}`, 24, 40);
-
-      ctx.textAlign = "center";
-      ctx.fillText(`HI-SCORE: ${highScore.toString().padStart(4, '0')}`, canvas.width / 2, 40);
-
-      ctx.textAlign = "right";
-      ctx.fillText(`LIVES: ${currentLives}`, canvas.width - 24, 40);
-
-      ctx.fillStyle = "#333333";
-      ctx.fillRect(24, 52, canvas.width - 48, 2);
-
-      // Overlays
-      if (gameOver) {
-        drawOverlay("GAME OVER", "CLICK OR PRESS SPACE TO START NEW GAME", `NICE TRY, ${playerName.toUpperCase()}!`);
-      } else if (gameWon) {
-        drawOverlay(`LEVEL ${level} CLEARED!`, `SCORE: ${score} • CLICK OR SPACE FOR LEVEL ${level + 1}`, `VICTORY FOR ${playerName.toUpperCase()}!`);
-      } else if (isPaused && !isSettingsOpen) {
-        if (!ball.active) {
-          if (isResumedSession) {
-            drawOverlay(`WELCOME BACK ${playerName.toUpperCase()}!`, `SCORE: ${score} | LEVEL: ${level} • PRESS SPACE TO LAUNCH`, "★ SESSION RESUMED ★");
-          } else {
-            drawOverlay(`WELCOME ${playerName.toUpperCase()}!`, "PRESS SPACE OR CLICK CANVAS TO LAUNCH", "★ RETRO BREAKOUT ARCADE ★");
-          }
-        } else {
-          drawOverlay("PAUSED", "PRESS SPACE TO RESUME");
-        }
-      }
-    }
-
-    function drawOverlay(title, subtitle, tagText) {
-      ctx.fillStyle = "rgba(0, 0, 0, 0.82)";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      if (tagText) {
-        ctx.fillStyle = "#00ffff";
-        ctx.font = "bold 15px 'Courier New', Courier, monospace";
-        ctx.textAlign = "center";
-        ctx.fillText(tagText, canvas.width / 2, canvas.height / 2 - 50);
-      }
-
-      ctx.fillStyle = "#ff0040";
-      ctx.font = "bold 28px 'Courier New', Courier, monospace";
-      ctx.textAlign = "center";
-      ctx.fillText(title, canvas.width / 2, canvas.height / 2 - 12);
-
-      ctx.fillStyle = "#ffffff";
-      ctx.font = "14px 'Courier New', Courier, monospace";
-      ctx.fillText(subtitle, canvas.width / 2, canvas.height / 2 + 26);
-    }
-
-    // Delta-Time Game Loop
-    let lastFrameTime = performance.now();
-    function gameLoop(now) {
-      const deltaMs = now - lastFrameTime;
-      lastFrameTime = now;
-      const dt = Math.min(Math.max(deltaMs / 16.667, 0.1), 2.0);
-
-      updatePhysics(dt);
-      updateParticles(dt);
-      render();
-
-      requestAnimationFrame(gameLoop);
-    }
-
-    // Initialize State
-    const hasSavedState = loadGameState();
-    if (!hasSavedState) {
-      initBricks();
-      resetBallPaddle();
-    } else {
-      resetBallPaddle();
-    }
-
-    requestAnimationFrame(gameLoop);
+    bootReady = bootDoom();
   </script>
 </body>
 </html>
